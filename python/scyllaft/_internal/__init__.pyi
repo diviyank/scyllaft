@@ -9,7 +9,7 @@ from typing import (
     overload,
 )
 
-from scyllapy._internal.load_balancing import LoadBalancingPolicy
+from scyllaft._internal.load_balancing import LoadBalancingPolicy
 
 _T = TypeVar("_T")
 _T2 = TypeVar("_T2")
@@ -70,10 +70,13 @@ class Scylla:
         :param disallow_shard_aware_port: If true, prevents the driver from connecting
             to the shard-aware port, even if the node supports it.
         """
+
     async def startup(self) -> None:
         """Initialize the custer."""
+
     async def shutdown(self) -> None:
         """Shutdown the cluster."""
+
     async def prepare(self, query: str | Query) -> PreparedQuery: ...
     @overload
     async def execute(  # type: ignore
@@ -103,6 +106,7 @@ class Scylla:
             (Can be pydantic model or dataclass).
         :param paged: Whether to use paging. Default if false.
         """
+
     @overload
     async def execute(
         self,
@@ -126,8 +130,10 @@ class Scylla:
 
         It may speed up you application.
         """
+
     async def use_keyspace(self, keyspace: str) -> None:
         """Change current keyspace for all connections."""
+
     async def get_keyspace(self) -> str | None:
         """Get current keyspace."""
 

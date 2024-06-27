@@ -1,6 +1,6 @@
 [project]
-name = "scyllapy"
-description = "Async scylla driver for python"
+name = "scyllaft"
+description = "Async scylla driver for python - Fork"
 requires-python = ">=3.8,<4"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -20,7 +20,7 @@ dependencies = ["python-dateutil"]
 
 [tool.maturin]
 python-source = "python"
-module-name = "scyllapy._internal"
+module-name = "scyllaft._internal"
 features = ["pyo3/extension-module"]
 
 [tool.isort]

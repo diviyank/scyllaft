@@ -13,7 +13,7 @@ from ._internal import (
     SerialConsistency,
 )
 
-__version__ = version("scyllapy")
+__version__ = version("scyllaft")
 
 __all__ = [
     "__version__",
