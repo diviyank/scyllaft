@@ -1,6 +1,6 @@
 from typing import Any, Literal, overload
 
-from scyllapy._internal import (
+from scyllaft._internal import (
     Consistency,
     ExecutionProfile,
     InlineBatch,
