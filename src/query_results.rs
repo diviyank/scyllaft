@@ -8,7 +8,6 @@ use pyo3::{
 };
 use pyo3_log;
 use scylla::{transport::iterator::RowIterator, QueryResult};
-use scylla_cql::frame::response::result::{ColumnSpec, Row};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -298,44 +297,17 @@ pub struct ScyllaPyIterablePagedQueryResult {
     inner: Arc<Mutex<RowIterator>>,
     mapper: Option<Py<PyAny>>,
     scalars: bool,
-    batchsize: i32
+    batchsize: usize,
 }
 
 impl ScyllaPyIterablePagedQueryResult {
-    pub fn new(results: RowIterator, batchsize:i32) -> Self {
+    pub fn new(results: RowIterator, batchsize: i32) -> Self {
         Self {
             inner: Arc::new(Mutex::new(results)),
             mapper: None,
             scalars: false,
-            batchsize
+            batchsize: batchsize as usize,
         }
-    }
-    fn get_rows<'a>(
-        &'a self,
-        py: Python<'a>,
-        rows: &Vec<Row>,
-        specs: &'a [ColumnSpec],
-    ) -> ScyllaPyResult<Option<Vec<rustc_hash::FxHashMap<&'a str, &'a PyAny>>>> {
-        let mut dumped_rows = Vec::new();
-        for (row_index, row) in rows.iter().enumerate() {
-            let mut map = HashMap::with_capacity_and_hasher(
-                specs.len(),
-                BuildHasherDefault::<rustc_hash::FxHasher>::default(),
-            );
-            for (col_index, column) in row.columns.iter().enumerate() {
-                map.insert(
-                    specs[col_index].name.as_str(),
-                    cql_to_py(
-                        py,
-                        &specs[col_index].name,
-                        &specs[col_index].typ,
-                        column.as_ref(),
-                    )?,
-                );
-            }
-            dumped_rows.push(map);
-        }
-        Ok(Some(dumped_rows))
     }
 }
 
@@ -363,40 +335,59 @@ impl ScyllaPyIterablePagedQueryResult {
     /// Here we define how to
     pub fn __anext__(&self, py: Python<'_>) -> ScyllaPyResult<Option<PyObject>> {
         let streamer = self.inner.clone();
+        let batchsize = self.batchsize.clone();
         if self.scalars {
             pyo3_log::init();
             error!("Scalar mode is not supported");
         }
-        if self.mapper.is_some(){
-
+        if self.mapper.is_some() {
             pyo3_log::init();
             error!("Map class mode is not supported");
         }
         // Here we create our future that actually yields page.
         let future = scyllapy_future(py, async move {
-
             let mut page_iterator = streamer.lock().await;
             let mut page = Vec::new();
-            for _  in [0..10]{
+            for _ in 0..batchsize {
                 if let Some(Ok(row)) = page_iterator.next().await {
                     page.push(row)
-                } else{
-                    if page.len() == 0{
-                        return Err(PyStopAsyncIteration::new_err("No more pages").into())
+                } else {
+                    if page.len() == 0 {
+                        return Err(PyStopAsyncIteration::new_err("No more pages").into());
                     }
+                    break;
                 };
-            };
-
+            }
             let col_spec = page_iterator.get_column_specs();
             // Here we acquire GIL and map page to python object.
             Python::with_gil(move |gil| -> ScyllaPyResult<Py<PyAny>> {
-                let Some(rows) = self.get_rows(gil, &page, col_spec)? else {
-                    return Err(ScyllaPyError::NoReturnsError);
-                };
-                let py_rows = rows.to_object(gil);
+                // let Some(rows) = self.get_rows(gil, &page, col_spec)? else {
+                //     return Err(ScyllaPyError::NoReturnsError);
+                // };
+                let mut dumped_rows = Vec::new();
+                for row in page.iter() {
+                    let mut map = HashMap::with_capacity_and_hasher(
+                        col_spec.len(),
+                        BuildHasherDefault::<rustc_hash::FxHasher>::default(),
+                    );
+                    for (col_index, column) in row.columns.iter().enumerate() {
+                        map.insert(
+                            col_spec[col_index].name.as_str(),
+                            cql_to_py(
+                                gil,
+                                &col_spec[col_index].name,
+                                &col_spec[col_index].typ,
+                                column.as_ref(),
+                            )?,
+                        );
+                    }
+                    dumped_rows.push(map);
+                }
+
+                let py_rows = dumped_rows.to_object(gil);
+
                 Ok(py_rows)
             })
-
         });
         Ok(Some(future?.into()))
     }
