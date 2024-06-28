@@ -4,6 +4,7 @@ from scyllaft._internal import (
     Consistency,
     ExecutionProfile,
     InlineBatch,
+    IterablePagedQueryResult,
     IterableQueryResult,
     QueryResult,
     Scylla,
@@ -37,17 +38,22 @@ class Select:
         self,
         scylla: Scylla,
         *,
-        paged: Literal[False] = False,
+        paged: Literal[0] = 0,
     ) -> QueryResult: ...
     @overload
     async def execute(
         self,
         scylla: Scylla,
         *,
-        paged: Literal[True] = True,
+        paged: Literal[1] = 1,
     ) -> IterableQueryResult[dict[str, Any]]: ...
     @overload
-    async def execute(self, scylla: Scylla, *, paged: bool = False) -> Any: ...
+    async def execute(
+        self,
+        scylla: Scylla,
+        *,
+        paged: int = 0,
+    ) -> IterablePagedQueryResult: ...
 
 class Insert:
     def __init__(self, table: str) -> None: ...
