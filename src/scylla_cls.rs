@@ -5,7 +5,7 @@ use crate::{
     execution_profiles::ScyllaPyExecutionProfile,
     inputs::{BatchInput, ExecuteInput, PrepareInput},
     prepared_queries::ScyllaPyPreparedQuery,
-    query_results::{ScyllaPyIterableQueryResult, ScyllaPyQueryResult, ScyllaPyQueryReturns},
+    query_results::{ScyllaPyIterableQueryResult, ScyllaPyQueryResult, ScyllaPyQueryReturns, ScyllaPyIterablePagedQueryResult},
     utils::{parse_python_query_params, scyllapy_future},
 };
 use openssl::{
@@ -55,7 +55,7 @@ impl Scylla {
         query: Option<impl Into<Query> + Send + 'static>,
         prepared: Option<PreparedStatement>,
         values: impl ValueList + Send + 'static,
-        paged: bool,
+        paged: i32,
     ) -> ScyllaPyResult<&'a PyAny> {
         let session_arc = self.scylla_session.clone();
         scyllapy_future(py, async move {
@@ -64,7 +64,30 @@ impl Scylla {
                 "Session is not initialized.".into(),
             ))?;
             // let res = session.query(query, values).await?;
-            if paged {
+
+            if paged >1 {
+                match (query, prepared) {
+                    (Some(query), None) => {
+                        let mut query_s = query.into();
+                        query_s.set_page_size(paged);
+                        Ok(ScyllaPyQueryReturns::IterablePagedQueryResult(
+                        ScyllaPyIterablePagedQueryResult::new(session.query_iter(query_s, values).await?, paged),
+                        ))
+                    },
+                    (None, Some(mut prepared)) => {
+
+                        prepared.set_page_size(paged);
+                        Ok(ScyllaPyQueryReturns::IterablePagedQueryResult(
+                        ScyllaPyIterablePagedQueryResult::new(
+                            session.execute_iter(prepared, values).await?, paged,
+                        ),
+                    ))},
+                    _ => Err(ScyllaPyError::SessionError(
+                        "You should pass either query or prepared query.".into(),
+                    )),
+                }
+            }
+            else if paged == 1 {
                 match (query, prepared) {
                     (Some(query), None) => Ok(ScyllaPyQueryReturns::IterableQueryResult(
                         ScyllaPyIterableQueryResult::new(session.query_iter(query, values).await?),
@@ -282,13 +305,13 @@ impl Scylla {
     /// # Errors
     ///
     /// Can result in an error in any case, when something goes wrong.
-    #[pyo3(signature = (query, params = None, *, paged = false))]
+    #[pyo3(signature = (query, params = None, *, paged = 0))]
     pub fn execute<'a>(
         &'a self,
         py: Python<'a>,
         query: ExecuteInput,
         params: Option<&'a PyAny>,
-        paged: bool,
+        paged: i32,
     ) -> ScyllaPyResult<&'a PyAny> {
         let mut col_spec = None;
         // We need to prepare parameter we're going to use

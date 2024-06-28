@@ -84,7 +84,7 @@ class Scylla:
         query: str | Query | PreparedQuery,
         params: Iterable[Any] | dict[str, Any] | None = None,
         *,
-        paged: Literal[False] = False,
+        paged: Literal[0] = 0,
     ) -> QueryResult:
         """
         Execute a query.
@@ -113,8 +113,16 @@ class Scylla:
         query: str | Query | PreparedQuery,
         params: Iterable[Any] | dict[str, Any] | None = None,
         *,
-        paged: Literal[True] = ...,
+        paged: Literal[1],
     ) -> IterableQueryResult[dict[str, Any]]: ...
+    @overload
+    async def execute(
+        self,
+        query: str | Query | PreparedQuery,
+        params: Iterable[Any] | dict[str, Any] | None = None,
+        *,
+        paged: int,
+    ) -> IterablePagedQueryResult[dict[str, Any]]: ...
     async def batch(
         self,
         batch: Batch | InlineBatch,
@@ -170,6 +178,15 @@ class IterableQueryResult(Generic[_T]):
     def scalars(self) -> IterableQueryResult[Any]: ...
     def __aiter__(self) -> IterableQueryResult[_T]: ...
     async def __anext__(self) -> _T: ...
+
+class IterablePagedQueryResult(Generic[_T]):
+    def as_cls(
+        self: IterablePagedQueryResult[_T],
+        as_class: Callable[..., _T2],
+    ) -> IterablePagedQueryResult[_T2]: ...
+    def scalars(self) -> IterablePagedQueryResult[Any]: ...
+    def __aiter__(self) -> IterablePagedQueryResult[_T]: ...
+    async def __anext__(self) -> list[_T]: ...
 
 class Query:
     """

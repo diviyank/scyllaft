@@ -17,6 +17,7 @@ pub struct ScyllaPyRequestParams {
     pub is_idempotent: Option<bool>,
     pub tracing: Option<bool>,
     pub profile: Option<ScyllaPyExecutionProfile>,
+    pub page_size: Option<i32>,
 }
 
 impl ScyllaPyRequestParams {
@@ -91,6 +92,10 @@ impl ScyllaPyRequestParams {
                 .transpose()?,
             profile: params
                 .get_item("profile")
+                .map(pyo3::FromPyObject::extract)
+                .transpose()?,
+            page_size: params
+                .get_item("page_size")
                 .map(pyo3::FromPyObject::extract)
                 .transpose()?,
         })
@@ -184,6 +189,13 @@ impl ScyllaPyQuery {
     pub fn with_profile(&self, profile: Option<ScyllaPyExecutionProfile>) -> Self {
         let mut query = Self::from(self);
         query.params.profile = profile;
+        query
+    }
+
+    #[must_use]
+    pub fn set_page_size(&self, page_size: Option<i32>) -> Self {
+        let mut query = Self::from(self);
+        query.params.page_size = page_size;
         query
     }
 }

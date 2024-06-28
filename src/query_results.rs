@@ -1,11 +1,14 @@
 use std::{collections::HashMap, hash::BuildHasherDefault, sync::Arc};
 
 use futures::StreamExt;
+use log::error;
 use pyo3::{
     exceptions::PyStopAsyncIteration, pyclass, pymethods, types::PyDict, IntoPy, Py, PyAny,
     PyObject, PyRef, PyRefMut, Python, ToPyObject,
 };
+use pyo3_log;
 use scylla::{transport::iterator::RowIterator, QueryResult};
+use scylla_cql::frame::response::result::{ColumnSpec, Row};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -16,6 +19,7 @@ use crate::{
 pub enum ScyllaPyQueryReturns {
     QueryResult(ScyllaPyQueryResult),
     IterableQueryResult(ScyllaPyIterableQueryResult),
+    IterablePagedQueryResult(ScyllaPyIterablePagedQueryResult),
 }
 
 impl IntoPy<Py<PyAny>> for ScyllaPyQueryReturns {
@@ -23,6 +27,7 @@ impl IntoPy<Py<PyAny>> for ScyllaPyQueryReturns {
         match self {
             ScyllaPyQueryReturns::QueryResult(result) => result.into_py(py),
             ScyllaPyQueryReturns::IterableQueryResult(result) => result.into_py(py),
+            ScyllaPyQueryReturns::IterablePagedQueryResult(result) => result.into_py(py),
         }
     }
 }
@@ -283,6 +288,115 @@ impl ScyllaPyIterableQueryResult {
                 }
                 None => Err(PyStopAsyncIteration::new_err("No more rows").into()),
             }
+        });
+        Ok(Some(future?.into()))
+    }
+}
+
+#[pyclass(name = "IterablePagedQueryResult")]
+pub struct ScyllaPyIterablePagedQueryResult {
+    inner: Arc<Mutex<RowIterator>>,
+    mapper: Option<Py<PyAny>>,
+    scalars: bool,
+    batchsize: i32
+}
+
+impl ScyllaPyIterablePagedQueryResult {
+    pub fn new(results: RowIterator, batchsize:i32) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(results)),
+            mapper: None,
+            scalars: false,
+            batchsize
+        }
+    }
+    fn get_rows<'a>(
+        &'a self,
+        py: Python<'a>,
+        rows: &Vec<Row>,
+        specs: &'a [ColumnSpec],
+    ) -> ScyllaPyResult<Option<Vec<rustc_hash::FxHashMap<&'a str, &'a PyAny>>>> {
+        let mut dumped_rows = Vec::new();
+        for (row_index, row) in rows.iter().enumerate() {
+            let mut map = HashMap::with_capacity_and_hasher(
+                specs.len(),
+                BuildHasherDefault::<rustc_hash::FxHasher>::default(),
+            );
+            for (col_index, column) in row.columns.iter().enumerate() {
+                map.insert(
+                    specs[col_index].name.as_str(),
+                    cql_to_py(
+                        py,
+                        &specs[col_index].name,
+                        &specs[col_index].typ,
+                        column.as_ref(),
+                    )?,
+                );
+            }
+            dumped_rows.push(map);
+        }
+        Ok(Some(dumped_rows))
+    }
+}
+
+#[pymethods]
+impl ScyllaPyIterablePagedQueryResult {
+    #[must_use]
+    pub fn as_cls(mut slf: PyRefMut<'_, Self>, as_class: Py<PyAny>) -> PyRefMut<'_, Self> {
+        slf.mapper = Some(as_class);
+        slf
+    }
+
+    #[must_use]
+    pub fn scalars(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf.scalars = true;
+        slf
+    }
+
+    #[must_use]
+    pub fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    /// Actual async iteration.
+    ///
+    /// Here we define how to
+    pub fn __anext__(&self, py: Python<'_>) -> ScyllaPyResult<Option<PyObject>> {
+        let streamer = self.inner.clone();
+        if self.scalars {
+            pyo3_log::init();
+            error!("Scalar mode is not supported");
+        }
+        if self.mapper.is_some(){
+
+            pyo3_log::init();
+            error!("Map class mode is not supported");
+        }
+        // Here we create our future that actually yields page.
+        let future = scyllapy_future(py, async move {
+
+            let mut page_iterator = streamer.lock().await;
+            let mut page = Vec::new();
+            for _  in [0..10]{
+                if let Some(Ok(row)) = page_iterator.next().await {
+                    page.push(row)
+                } else{
+                    if page.len() == 0{
+                        return Err(PyStopAsyncIteration::new_err("No more pages").into())
+                    }
+                };
+            };
+
+            let col_spec = page_iterator.get_column_specs();
+            // Here we acquire GIL and map page to python object.
+            Python::with_gil(move |gil| -> ScyllaPyResult<Py<PyAny>> {
+                let Some(rows) = self.get_rows(gil, &page, col_spec)? else {
+                    return Err(ScyllaPyError::NoReturnsError);
+                };
+                let py_rows = rows.to_object(gil);
+                Ok(py_rows)
+            })
+
         });
         Ok(Some(future?.into()))
     }

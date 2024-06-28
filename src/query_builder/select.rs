@@ -239,12 +239,12 @@ impl Select {
     /// # Errors
     ///
     /// Proxies errors from `native_execute`.
-    #[pyo3(signature = (scylla, *, paged = false))]
+    #[pyo3(signature = (scylla, *, paged = 0))]
     pub fn execute<'a>(
         &'a self,
         py: Python<'a>,
         scylla: &'a Scylla,
-        paged: bool,
+        paged: i32,
     ) -> ScyllaPyResult<&'a PyAny> {
         let mut query = Query::new(self.build_query());
         self.request_params_.apply_to_query(&mut query);

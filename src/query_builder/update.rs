@@ -285,7 +285,7 @@ impl Update {
         } else {
             values
         };
-        scylla.native_execute(py, Some(query), None, values, false)
+        scylla.native_execute(py, Some(query), None, values, 0)
     }
 
     /// Add to batch
