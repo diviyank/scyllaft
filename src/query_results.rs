@@ -1,6 +1,6 @@
 use std::{collections::HashMap, hash::BuildHasherDefault, sync::Arc};
 
-use futures::StreamExt;
+use futures::{StreamExt, prelude::stream::ReadyChunks, stream::Take};
 use log::error;
 use pyo3::{
     exceptions::PyStopAsyncIteration, pyclass, pymethods, types::PyDict, IntoPy, Py, PyAny,
@@ -8,11 +8,12 @@ use pyo3::{
 };
 use pyo3_log;
 use scylla::{transport::iterator::RowIterator, QueryResult};
+use scylla_cql::frame::response::result::ColumnSpec;
 use tokio::sync::Mutex;
-
+use scylla::frame::response::result::Row;
 use crate::{
     exceptions::rust_err::{ScyllaPyError, ScyllaPyResult},
-    utils::{cql_to_py, map_rows, scyllapy_future},
+    utils::{cql_to_py, map_rows, scyllapy_future}, consistencies,
 };
 
 pub enum ScyllaPyQueryReturns {
@@ -294,16 +295,18 @@ impl ScyllaPyIterableQueryResult {
 
 #[pyclass(name = "IterablePagedQueryResult")]
 pub struct ScyllaPyIterablePagedQueryResult {
-    inner: Arc<Mutex<RowIterator>>,
+    inner: Arc<Mutex<Take<ReadyChunks<RowIterator>>>>,
     mapper: Option<Py<PyAny>>,
     scalars: bool,
     batchsize: usize,
+    column_specs: Box<Vec<ColumnSpec>>
 }
 
 impl ScyllaPyIterablePagedQueryResult {
     pub fn new(results: RowIterator, batchsize: i32) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(results)),
+            column_specs: Box::new(results.get_column_specs().clone().to_owned()),
+            inner: Arc::new(Mutex::new(results.ready_chunks(10000).take(1000))),
             mapper: None,
             scalars: false,
             batchsize: batchsize as usize,
@@ -335,7 +338,8 @@ impl ScyllaPyIterablePagedQueryResult {
     /// Here we define how to
     pub fn __anext__(&self, py: Python<'_>) -> ScyllaPyResult<Option<PyObject>> {
         let streamer = self.inner.clone();
-        let batchsize = self.batchsize.clone();
+        let col_specs = self.column_specs.clone() ;
+
         if self.scalars {
             pyo3_log::init();
             error!("Scalar mode is not supported");
@@ -344,21 +348,18 @@ impl ScyllaPyIterablePagedQueryResult {
             pyo3_log::init();
             error!("Map class mode is not supported");
         }
+
+
+
         // Here we create our future that actually yields page.
         let future = scyllapy_future(py, async move {
             let mut page_iterator = streamer.lock().await;
-            let mut page = Vec::new();
-            for _ in 0..batchsize {
-                if let Some(Ok(row)) = page_iterator.next().await {
-                    page.push(row)
-                } else {
-                    if page.len() == 0 {
-                        return Err(PyStopAsyncIteration::new_err("No more pages").into());
-                    }
-                    break;
-                };
-            }
-            let col_spec = page_iterator.get_column_specs();
+
+            let page_query = page_iterator.next().await.expect(Err(PyStopAsyncIteration::new_err("No more pages").into())).iter_mut().filter_map(|x| x.ok()) else {
+                return ;
+            };
+
+
             // Here we acquire GIL and map page to python object.
             Python::with_gil(move |gil| -> ScyllaPyResult<Py<PyAny>> {
                 // let Some(rows) = self.get_rows(gil, &page, col_spec)? else {
@@ -366,17 +367,20 @@ impl ScyllaPyIterablePagedQueryResult {
                 // };
                 let mut dumped_rows = Vec::new();
                 for row in page.iter() {
+                    if row.is_err() {
+                        continue;
+                    }
                     let mut map = HashMap::with_capacity_and_hasher(
-                        col_spec.len(),
+                        col_specs.len(),
                         BuildHasherDefault::<rustc_hash::FxHasher>::default(),
                     );
-                    for (col_index, column) in row.columns.iter().enumerate() {
+                    for (col_index, column) in row.as_mut().unwrap().columns.iter().enumerate() {
                         map.insert(
-                            col_spec[col_index].name.as_str(),
+                            col_specs[col_index].name.as_str(),
                             cql_to_py(
                                 gil,
-                                &col_spec[col_index].name,
-                                &col_spec[col_index].typ,
+                                &col_specs[col_index].name,
+                                &col_specs[col_index].typ,
                                 column.as_ref(),
                             )?,
                         );
