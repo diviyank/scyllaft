@@ -1,5 +1,5 @@
-[![PyPI](https://img.shields.io/pypi/v/scyllapy?style=for-the-badge)](https://pypi.org/project/scyllapy/)
-[![PyPI - Downloads](https://img.shields.io/pypi/dm/scyllapy?style=for-the-badge)](https://pypistats.org/packages/scyllapy)
+[![PyPI](https://img.shields.io/pypi/v/scyllapy?style=for-the-badge)](https://pypi.org/project/scyllaft/)
+[![PyPI - Downloads](https://img.shields.io/pypi/dm/scyllapy?style=for-the-badge)](https://pypistats.org/packages/scyllaft)
 
 
 # Async Scylla driver for python
@@ -9,12 +9,14 @@ however it can be used with Cassandra and AWS keyspaces as well.
 
 This driver uses official [ScyllaDB driver](https://github.com/scylladb/scylla-rust-driver) for [Rust](https://github.com/rust-lang/rust/) and exposes python API to interact with it.
 
+This driver is a fork of Intreecom/scyllapy with additional features for pulling data.
+
 ## Installation
 
 To install it, use your favorite package manager for python packages:
 
 ```bash
-pip install scyllapy
+pip install scyllaft
 ```
 
 Also, you can build from sources. To do it, install stable rust, [maturin](https://github.com/PyO3/maturin) and openssl libs.
@@ -32,7 +34,7 @@ The usage is pretty straitforward. Create a Scylla instance, run startup and sta
 ```python
 import asyncio
 
-from scyllapy import Scylla
+from scyllaft import Scylla
 
 
 async def main():
@@ -63,7 +65,7 @@ Queries can be modified further by using `Query` class. It allows you to define
 consistency for query or enable tracing.
 
 ```python
-from scyllapy import Scylla, Query, Consistency, SerialConsistency
+from scyllaft import Scylla, Query, Consistency, SerialConsistency
 
 async def make_query(scylla: Scylla) -> None:
     query = Query(
@@ -108,7 +110,7 @@ Important note: All variables should be in snake_case.
 Otherwise the error may be raised or parameter may not be placed in query correctly.
 This happens, because scylla makes all parameters in query lowercase.
 
-The scyllapy makes all parameters lowercase, but you may run into problems,
+The scyllaft makes all parameters lowercase, but you may run into problems,
 if you use multiple parameters that differ only in cases of some letters.
 
 
@@ -117,7 +119,7 @@ if you use multiple parameters that differ only in cases of some letters.
 Also, queries can be prepared. You can either prepare raw strings, or `Query` objects.
 
 ```python
-from scyllapy import Scylla, Query, PreparedQuery
+from scyllaft import Scylla, Query, PreparedQuery
 
 
 async def prepare(scylla: Scylla, query: str | Query) -> PreparedQuery:
@@ -137,7 +139,7 @@ async def run_prepared(scylla: Scylla) -> None:
 We support batches. Batching can help a lot when you have lots of queries that you want to execute at the same time.
 
 ```python
-from scyllapy import Scylla, Batch
+from scyllaft import Scylla, Batch
 
 
 async def run_batch(scylla: Scylla, num_queries: int) -> None:
@@ -214,8 +216,8 @@ You can define profiles using `ExecutionProfile` class. After that the
 profile can be used while creating a cluster or when defining queries.
 
 ```python
-from scyllapy import Consistency, ExecutionProfile, Query, Scylla, SerialConsistency
-from scyllapy.load_balancing import LoadBalancingPolicy, LatencyAwareness
+from scyllaft import Consistency, ExecutionProfile, Query, Scylla, SerialConsistency
+from scyllaft.load_balancing import LoadBalancingPolicy, LatencyAwareness
 
 default_profile = ExecutionProfile(
     consistency=Consistency.LOCAL_QUORUM,
@@ -312,10 +314,10 @@ can be either `tinyint`, `smallint` or even `bigint`. But we cannot say for sure
 how many bytes should we send to server. That's why we created some extra_types to
 eliminate any possible ambigousnity.
 
-You can find these types in `extra_types` module from scyllapy.
+You can find these types in `extra_types` module from scyllaft.
 
 ```python
-from scyllapy import Scylla, extra_types
+from scyllaft import Scylla, extra_types
 
 async def execute(scylla: Scylla) -> None:
     await scylla.execute(
@@ -342,7 +344,7 @@ Now we need to define a model for it in python.
 
 ```python
 from dataclasses import dataclass
-from scyllapy.extra_types import ScyllaPyUDT
+from scyllaft.extra_types import ScyllaPyUDT
 
 @dataclass
 class TestUDT(ScyllaPyUDT):
@@ -363,7 +365,7 @@ We also support pydantic based models. Decalre them like this:
 
 ```python
 from pydantic import BaseModel
-from scyllapy.extra_types import ScyllaPyUDT
+from scyllaft.extra_types import ScyllaPyUDT
 
 
 class TestUDT(BaseModel, ScyllaPyUDT):
@@ -376,17 +378,17 @@ class TestUDT(BaseModel, ScyllaPyUDT):
 
 # Query building
 
-ScyllaPy gives you ability to build queries,
+Scyllaft gives you ability to build queries,
 instead of working with raw cql. The main advantage that it's harder to make syntax error,
 while creating queries.
 
-Base classes for Query building can be found in `scyllapy.query_builder`.
+Base classes for Query building can be found in `scyllaft.query_builder`.
 
 Usage example:
 
 ```python
-from scyllapy import Scylla
-from scyllapy.query_builder import Insert, Select, Update, Delete
+from scyllaft import Scylla
+from scyllaft.query_builder import Insert, Select, Update, Delete
 
 
 async def main(scylla: Scylla):
@@ -428,8 +430,8 @@ need to use values from within your queries and should ignore all parameters pas
 Here's batch usage example.
 
 ```python
-from scyllapy import Scylla, InlineBatch
-from scyllapy.query_builder import Insert
+from scyllaft import Scylla, InlineBatch
+from scyllaft.query_builder import Insert
 
 
 async def execute_batch(scylla: Scylla) -> None:
@@ -447,8 +449,10 @@ But it supported only for select, because update, delete and insert should
 not return anything and it makes no sense implementing it.
 To make built `Select` query return paginated iterator, add paged parameter in execute method.
 
+The `paged` argument represents the page_size of the query. 
+
 ```python
-    rows = await Select("test").execute(scylla, paged=True)
+    rows = await Select("test").execute(scylla, paged=5000)
     async for row in rows:
         print(row['id'])
 ```
