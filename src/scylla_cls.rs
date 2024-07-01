@@ -1,11 +1,14 @@
-use std::{num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{collections::HashMap, num::NonZeroUsize, sync::Arc, time::Duration};
 
 use crate::{
     exceptions::rust_err::{ScyllaPyError, ScyllaPyResult},
     execution_profiles::ScyllaPyExecutionProfile,
     inputs::{BatchInput, ExecuteInput, PrepareInput},
     prepared_queries::ScyllaPyPreparedQuery,
-    query_results::{ScyllaPyIterableQueryResult, ScyllaPyQueryResult, ScyllaPyQueryReturns, ScyllaPyIterablePagedQueryResult},
+    query_results::{
+        ScyllaPyIterablePagedQueryResult, ScyllaPyIterableQueryResult, ScyllaPyQueryResult,
+        ScyllaPyQueryReturns,
+    },
     utils::{parse_python_query_params, scyllapy_future},
 };
 use openssl::{
@@ -14,6 +17,7 @@ use openssl::{
 };
 use pyo3::{pyclass, pymethods, PyAny, Python};
 use scylla::{frame::value::ValueList, prepared_statement::PreparedStatement, query::Query};
+use scylla_cql::frame::response::result::ColumnSpec;
 
 #[pyclass(frozen, weakref)]
 #[derive(Clone)]
@@ -34,6 +38,7 @@ pub struct Scylla {
     tcp_nodelay: Option<bool>,
     default_execution_profile: Option<ScyllaPyExecutionProfile>,
     scylla_session: Arc<tokio::sync::RwLock<Option<scylla::Session>>>,
+    column_specs: HashMap<String, Box<Vec<ColumnSpec>>>,
 }
 
 impl Scylla {
@@ -64,30 +69,33 @@ impl Scylla {
                 "Session is not initialized.".into(),
             ))?;
             // let res = session.query(query, values).await?;
-
-            if paged >1 {
+            println!("PAGED :: {}", paged);
+            if paged > 1 {
                 match (query, prepared) {
                     (Some(query), None) => {
                         let mut query_s = query.into();
                         query_s.set_page_size(paged);
                         Ok(ScyllaPyQueryReturns::IterablePagedQueryResult(
-                        ScyllaPyIterablePagedQueryResult::new(session.query_iter(query_s, values).await?, paged),
+                            ScyllaPyIterablePagedQueryResult::new(
+                                session.query_iter(query_s, values).await?,
+                                paged,
+                            ),
                         ))
-                    },
+                    }
                     (None, Some(mut prepared)) => {
-
                         prepared.set_page_size(paged);
                         Ok(ScyllaPyQueryReturns::IterablePagedQueryResult(
-                        ScyllaPyIterablePagedQueryResult::new(
-                            session.execute_iter(prepared, values).await?, paged,
-                        ),
-                    ))},
+                            ScyllaPyIterablePagedQueryResult::new(
+                                session.execute_iter(prepared, values).await?,
+                                paged,
+                            ),
+                        ))
+                    }
                     _ => Err(ScyllaPyError::SessionError(
                         "You should pass either query or prepared query.".into(),
                     )),
                 }
-            }
-            else if paged == 1 {
+            } else if paged == 1 {
                 match (query, prepared) {
                     (Some(query), None) => Ok(ScyllaPyQueryReturns::IterableQueryResult(
                         ScyllaPyIterableQueryResult::new(session.query_iter(query, values).await?),
@@ -102,6 +110,7 @@ impl Scylla {
                     )),
                 }
             } else {
+                println!("PAGED OK :: {}", paged);
                 match (query, prepared) {
                     (Some(query), None) => Ok(ScyllaPyQueryReturns::QueryResult(
                         ScyllaPyQueryResult::new(session.query(query, values).await?),
@@ -116,6 +125,24 @@ impl Scylla {
             }
         })
         .map_err(Into::into)
+    }
+
+    pub fn get_col_specs<'a>(
+        &'a self,
+        py: Python<'a>,
+        name: String,
+        already_ran: Option<bool>,
+    ) -> Option<&'a Box<Vec<ColumnSpec>>> {
+        if !self.column_specs.contains_key(&name) {
+            if already_ran.is_some() {
+                None
+            } else {
+                self.refresh_column_specs(py);
+                self.get_col_specs(py, name,  Some(true))
+            }
+        } else {
+            self.column_specs.get(&name).to_owned()
+        }
     }
 }
 
@@ -175,6 +202,7 @@ impl Scylla {
             tcp_nodelay,
             default_execution_profile,
             scylla_session: Arc::new(tokio::sync::RwLock::new(None)),
+            column_specs: HashMap::new(),
         }
     }
 
@@ -434,4 +462,42 @@ impl Scylla {
             Ok(keyspace)
         })
     }
+
+    /// Refresh the column specs from the current keyspace.
+    ///
+    /// # Errors
+    /// May return an error, if
+    /// sessions was not initialized.
+    pub fn refresh_column_specs<'a>(&'a self, _python: Python<'a>) {
+        let session_guard = self.scylla_session.clone();
+        async {
+            let session_guard = session_guard.read().await;
+            let Ok(session) = session_guard.as_ref().ok_or(ScyllaPyError::SessionError(
+                "Session is not initialized.".into(),
+            )) else {
+              return Err(ScyllaPyError::SessionError("Session Init err".into()))
+            };
+
+            let Ok(result) = session.query("DESCRIBE tables", &[]).await else{
+
+              return Err(ScyllaPyError::SessionError("No table found".into()))
+            };
+
+            let Ok(mut iter) = result.rows_typed::<(String, String, String)>() else {
+              return Err(ScyllaPyError::SessionError("No table found".into()))
+            };
+
+            while let Ok(Some((_keyspace, _type, table))) = iter.next().transpose(){
+
+                println!("{:?}", table);
+
+                let select_table = session.query_iter(format!("SELECT * FROM {} LIMIT 1", table), &[]).await;
+                if select_table.is_ok(){
+                    self.column_specs.insert(table,Box::new(select_table.unwrap().get_column_specs().to_owned()));
+
+                }
+
+            // session.execute
+            }}
+}
 }

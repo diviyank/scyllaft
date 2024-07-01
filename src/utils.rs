@@ -168,6 +168,7 @@ pub fn py_to_value(
     } else if item.is_instance_of::<PyBool>() {
         Ok(ScyllaPyCQLDTO::Bool(item.extract::<bool>()?))
     } else if item.is_instance_of::<PyInt>() {
+        println!("Detected Pyint:: {:?}", column_type);
         match column_type {
             Some(ColumnType::TinyInt) => Ok(ScyllaPyCQLDTO::TinyInt(item.extract::<i8>()?)),
             Some(ColumnType::SmallInt) => Ok(ScyllaPyCQLDTO::SmallInt(item.extract::<i16>()?)),
@@ -618,12 +619,14 @@ pub fn parse_python_query_params(
         return Ok(values);
     };
 
+    println!("Im here!");
     // If list was passed, we construct only unnamed parameters.
     // Otherwise it parses dict to named parameters.
     if params.is_instance_of::<PyList>() || params.is_instance_of::<PyTuple>() {
         let params = params.extract::<Vec<&PyAny>>()?;
         for (index, param) in params.iter().enumerate() {
             let coltype = col_spec.and_then(|specs| specs.get(index)).map(|f| &f.typ);
+            println!("COLTYPE::: {:?}", coltype);
             let py_dto = py_to_value(param, coltype)?;
             values.add_value(&py_dto)?;
         }
@@ -638,6 +641,7 @@ pub fn parse_python_query_params(
                         .collect::<HashMap<_, _, BuildHasherDefault<rustc_hash::FxHasher>>>()
                 })
                 .unwrap_or_default();
+            println!("TYPES_MAP::: {:?}", types_map);
             // let map = HashMap::with_capacity_and_hasher(, hasher)
             let dict = params
                 .extract::<HashMap<&str, &PyAny, BuildHasherDefault<rustc_hash::FxHasher>>>()?;
