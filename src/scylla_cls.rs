@@ -133,12 +133,13 @@ impl Scylla {
         let column_specs = self.column_specs.clone();
         let col_specs = column_specs.try_read().unwrap();
         if !col_specs.contains_key(&name) {
-            let _ = self.refresh_column_specs(py);
+            let _ = self.refresh_column_specs(py, Some(name.clone()));
         }
         let mut specs = col_specs[&name].clone();
 
         if columns.is_some() {
             let columns_unwrap = columns.unwrap();
+
             let order_map: HashMap<_, _> = columns_unwrap
                 .iter()
                 .enumerate()
@@ -543,7 +544,12 @@ impl Scylla {
     /// # Errors
     /// May return an error, if
     /// sessions was not initialized.
-    pub fn refresh_column_specs<'a>(&'a self, python: Python<'a>) -> ScyllaPyResult<&'a PyAny> {
+    #[pyo3(signature = (table=None))]
+    pub fn refresh_column_specs<'a>(
+        &'a self,
+        python: Python<'a>,
+        table: Option<String>,
+    ) -> ScyllaPyResult<&'a PyAny> {
         let session_guard = self.scylla_session.clone();
         let column_specs = self.column_specs.clone();
         scyllapy_future(python, async move {
@@ -554,30 +560,44 @@ impl Scylla {
                 return Err(ScyllaPyError::SessionError("Session Init err".into()));
             };
 
-            let Ok(result) = session.query("DESCRIBE tables", &[]).await else {
-                return Err(ScyllaPyError::SessionError("No table found".into()));
-            };
+            if table.is_none() {
+                let Ok(result) = session.query("DESCRIBE tables", &[]).await else {
+                    return Err(ScyllaPyError::SessionError("No table found".into()));
+                };
 
-            let Ok(mut iter) = result.rows_typed::<(String, String, String)>() else {
-                return Err(ScyllaPyError::SessionError("No table found".into()));
-            };
+                let Ok(mut iter) = result.rows_typed::<(String, String, String)>() else {
+                    return Err(ScyllaPyError::SessionError("No table found".into()));
+                };
 
-            let mut new_specs = HashMap::new();
-            while let Ok(Some((_keyspace, _type, table))) = iter.next().transpose() {
+                let mut new_specs = HashMap::new();
+                while let Ok(Some((_keyspace, _type, table))) = iter.next().transpose() {
+                    let select_table = session
+                        .query_iter(format!("SELECT * FROM {} LIMIT 1", table), &[])
+                        .await;
+                    if select_table.is_ok() {
+                        new_specs.insert(
+                            table,
+                            Box::new(select_table.unwrap().get_column_specs().to_owned()),
+                        );
+                    }
+                }
+                let mut column_guard = column_specs.write().await;
+                *column_guard = new_specs;
+            } else {
                 let select_table = session
-                    .query_iter(format!("SELECT * FROM {} LIMIT 1", table), &[])
+                    .query_iter(
+                        format!("SELECT * FROM {} LIMIT 1", table.as_ref().unwrap()),
+                        &[],
+                    )
                     .await;
                 if select_table.is_ok() {
-                    new_specs.insert(
-                        table,
+                    let mut column_guard = column_specs.write().await;
+                    column_guard.insert(
+                        table.unwrap(),
                         Box::new(select_table.unwrap().get_column_specs().to_owned()),
                     );
                 }
-                // session.execute
             }
-
-            let mut column_guard = column_specs.write().await;
-            *column_guard = new_specs;
 
             Ok(())
         })
