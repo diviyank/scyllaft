@@ -449,7 +449,7 @@ But it supported only for select, because update, delete and insert should
 not return anything and it makes no sense implementing it.
 To make built `Select` query return paginated iterator, add paged parameter in execute method.
 
-The `paged` argument represents the page_size of the query. 
+The `paged` argument represents the page_size of the query.
 
 ```python
     rows = await Select("test").execute(scylla, paged=5000)

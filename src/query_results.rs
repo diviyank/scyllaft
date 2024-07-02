@@ -9,8 +9,7 @@ use pyo3::{
     PyObject, PyRef, PyRefMut, Python, ToPyObject,
 };
 use pyo3_log;
-use scylla::frame::response::result::Row;
-use scylla::{transport::iterator::RowIterator, QueryResult};
+use scylla::{frame::response::result::Row, transport::iterator::RowIterator, QueryResult};
 use scylla_cql::{errors::QueryError, frame::response::result::ColumnSpec};
 use std::{collections::HashMap, hash::BuildHasherDefault, sync::Arc};
 use tokio::sync::Mutex;

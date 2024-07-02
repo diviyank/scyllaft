@@ -60,7 +60,7 @@ repos:
         args:
           - clippy
           - -p
-          - scyllapy
+          - scyllaft
           - --
           - -W
           - clippy::all

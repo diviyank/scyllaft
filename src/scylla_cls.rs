@@ -15,7 +15,7 @@ use openssl::{
     ssl::{SslContextBuilder, SslMethod, SslVerifyMode},
     x509::X509,
 };
-use pyo3::{pyclass, pymethods, PyAny, Python};
+use pyo3::{pyclass, pymethods, types::PyList, PyAny, Python};
 use scylla::{frame::value::ValueList, prepared_statement::PreparedStatement, query::Query};
 use scylla_cql::frame::response::result::ColumnSpec;
 
@@ -38,7 +38,7 @@ pub struct Scylla {
     tcp_nodelay: Option<bool>,
     default_execution_profile: Option<ScyllaPyExecutionProfile>,
     scylla_session: Arc<tokio::sync::RwLock<Option<scylla::Session>>>,
-    column_specs: HashMap<String, Box<Vec<ColumnSpec>>>,
+    column_specs: Arc<tokio::sync::RwLock<HashMap<String, Box<Vec<ColumnSpec>>>>>,
 }
 
 impl Scylla {
@@ -68,8 +68,6 @@ impl Scylla {
             let session = session_guard.as_ref().ok_or(ScyllaPyError::SessionError(
                 "Session is not initialized.".into(),
             ))?;
-            // let res = session.query(query, values).await?;
-            println!("PAGED :: {}", paged);
             if paged > 1 {
                 match (query, prepared) {
                     (Some(query), None) => {
@@ -110,7 +108,6 @@ impl Scylla {
                     )),
                 }
             } else {
-                println!("PAGED OK :: {}", paged);
                 match (query, prepared) {
                     (Some(query), None) => Ok(ScyllaPyQueryReturns::QueryResult(
                         ScyllaPyQueryResult::new(session.query(query, values).await?),
@@ -131,21 +128,28 @@ impl Scylla {
         &'a self,
         py: Python<'a>,
         name: String,
-        already_ran: Option<bool>,
-    ) -> Option<&'a Box<Vec<ColumnSpec>>> {
-        if !self.column_specs.contains_key(&name) {
-            if already_ran.is_some() {
-                None
-            } else {
-                self.refresh_column_specs(py);
-                self.get_col_specs(py, name,  Some(true))
-            }
-        } else {
-            self.column_specs.get(&name).to_owned()
+        columns: Option<Vec<String>>,
+    ) -> Option<Box<Vec<ColumnSpec>>> {
+        let column_specs = self.column_specs.clone();
+        let col_specs = column_specs.try_read().unwrap();
+        if !col_specs.contains_key(&name) {
+            let _ = self.refresh_column_specs(py);
         }
+        let mut specs = col_specs[&name].clone();
+
+        if columns.is_some() {
+            let columns_unwrap = columns.unwrap();
+            let order_map: HashMap<_, _> = columns_unwrap
+                .iter()
+                .enumerate()
+                .map(|(i, name)| (name, i))
+                .collect();
+            specs.sort_by_key(|spec| order_map.get(&spec.name).copied());
+            // new_specs = let mut Vec<ColumnSpec>;
+        }
+        Some(specs)
     }
 }
-
 #[pymethods]
 impl Scylla {
     #[new]
@@ -202,7 +206,7 @@ impl Scylla {
             tcp_nodelay,
             default_execution_profile,
             scylla_session: Arc::new(tokio::sync::RwLock::new(None)),
-            column_specs: HashMap::new(),
+            column_specs: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
 
@@ -230,6 +234,7 @@ impl Scylla {
         }
         let keyspace = self.keyspace.clone();
         let scylla_session = self.scylla_session.clone();
+        let column_specs = self.column_specs.clone();
         let conn_timeout = self.connection_timeout;
         let write_coalescing = self.write_coalescing;
         let disallow_shard_aware_port = self.disallow_shard_aware_port;
@@ -298,6 +303,37 @@ impl Scylla {
             }
             let mut session_guard = scylla_session.write().await;
             *session_guard = Some(session_builder.build().await?);
+
+            let Ok(session) = session_guard.as_ref().ok_or(ScyllaPyError::SessionError(
+                "Session is not initialized.".into(),
+            )) else {
+                return Err(ScyllaPyError::SessionError("Session Init err".into()));
+            };
+
+            let Ok(result) = session.query("DESCRIBE tables", &[]).await else {
+                return Err(ScyllaPyError::SessionError("No table found".into()));
+            };
+
+            let Ok(mut iter) = result.rows_typed::<(String, String, String)>() else {
+                return Err(ScyllaPyError::SessionError("No table found".into()));
+            };
+
+            let mut new_specs = HashMap::new();
+            while let Ok(Some((_keyspace, _type, table))) = iter.next().transpose() {
+                let select_table = session
+                    .query_iter(format!("SELECT * FROM {} LIMIT 1", table), &[])
+                    .await;
+                if select_table.is_ok() {
+                    new_specs.insert(
+                        table,
+                        Box::new(select_table.unwrap().get_column_specs().to_owned()),
+                    );
+                }
+                // session.execute
+            }
+
+            let mut column_guard = column_specs.write().await;
+            *column_guard = new_specs;
             Ok(())
         })
     }
@@ -333,19 +369,29 @@ impl Scylla {
     /// # Errors
     ///
     /// Can result in an error in any case, when something goes wrong.
-    #[pyo3(signature = (query, params = None, *, paged = 0))]
+    #[pyo3(signature = (query, params = None, table=None,columns=None, *, paged = 0))]
     pub fn execute<'a>(
         &'a self,
         py: Python<'a>,
         query: ExecuteInput,
         params: Option<&'a PyAny>,
+        table: Option<String>,
+        columns: Option<Vec<String>>,
         paged: i32,
     ) -> ScyllaPyResult<&'a PyAny> {
         let mut col_spec = None;
         // We need to prepare parameter we're going to use
         // in query.
         if let ExecuteInput::PreparedQuery(prepared) = &query {
-            col_spec = Some(prepared.inner.get_prepared_metadata().col_specs.as_ref());
+            col_spec = Some(Box::new(
+                prepared.inner.get_prepared_metadata().col_specs.to_owned(),
+            ));
+        }
+        if col_spec.is_none()
+            && table.is_some()
+            && (params.is_some() && params.unwrap().is_instance_of::<PyList>() || columns.is_some())
+        {
+            col_spec = self.get_col_specs(py, table.unwrap(), columns);
         }
         let query_params = parse_python_query_params(params, true, col_spec)?;
         // We need this clone, to safely share the session between threads.
@@ -360,17 +406,24 @@ impl Scylla {
     /// Execute a batch statement.
     ///
     /// This function takes a batch and list of lists of params.
-    #[pyo3(signature = (batch, params = None))]
+    #[pyo3(signature = (batch, params = None, table=None, columns=None))]
     pub fn batch<'a>(
         &'a self,
         py: Python<'a>,
         batch: BatchInput,
         params: Option<Vec<&'a PyAny>>,
+        table: Option<String>,
+        columns: Option<Vec<String>>,
     ) -> ScyllaPyResult<&'a PyAny> {
         // We need to prepare parameter we're going to use
         // in query.
         // If parameters were passed, we parse python values,
         // to corresponding CQL values.
+        let mut col_spec = None;
+
+        if table.is_some() && columns.is_some() {
+            col_spec = self.get_col_specs(py, table.unwrap(), columns);
+        }
 
         let (batch, batch_params) = match batch {
             BatchInput::Batch(batch) => {
@@ -380,7 +433,7 @@ impl Scylla {
                         batch_params.push(parse_python_query_params(
                             Some(query_params),
                             false,
-                            None,
+                            col_spec.clone(),
                         )?);
                     }
                 }
@@ -436,12 +489,39 @@ impl Scylla {
         keyspace: String,
     ) -> ScyllaPyResult<&'a PyAny> {
         let session_arc = self.scylla_session.clone();
+        let column_specs = self.column_specs.clone();
         scyllapy_future(python, async move {
             let guard = session_arc.write().await;
             let session = guard.as_ref().ok_or(ScyllaPyError::SessionError(
                 "Session is not initialized.".into(),
             ))?;
             session.use_keyspace(keyspace, true).await?;
+
+            let Ok(result) = session.query("DESCRIBE tables", &[]).await else {
+                return Err(ScyllaPyError::SessionError("No table found".into()));
+            };
+
+            let Ok(mut iter) = result.rows_typed::<(String, String, String)>() else {
+                return Err(ScyllaPyError::SessionError("No table found".into()));
+            };
+
+            let mut new_specs = HashMap::new();
+            while let Ok(Some((_keyspace, _type, table))) = iter.next().transpose() {
+                let select_table = session
+                    .query_iter(format!("SELECT * FROM {} LIMIT 1", table), &[])
+                    .await;
+                if select_table.is_ok() {
+                    new_specs.insert(
+                        table,
+                        Box::new(select_table.unwrap().get_column_specs().to_owned()),
+                    );
+                }
+                // session.execute
+            }
+
+            let mut column_guard = column_specs.write().await;
+            *column_guard = new_specs;
+
             Ok(())
         })
     }
@@ -468,36 +548,43 @@ impl Scylla {
     /// # Errors
     /// May return an error, if
     /// sessions was not initialized.
-    pub fn refresh_column_specs<'a>(&'a self, _python: Python<'a>) {
+    pub fn refresh_column_specs<'a>(&'a self, python: Python<'a>) -> ScyllaPyResult<&'a PyAny> {
         let session_guard = self.scylla_session.clone();
-        async {
-            let session_guard = session_guard.read().await;
+        let column_specs = self.column_specs.clone();
+        scyllapy_future(python, async move {
+            let session_guard = session_guard.write().await;
             let Ok(session) = session_guard.as_ref().ok_or(ScyllaPyError::SessionError(
                 "Session is not initialized.".into(),
             )) else {
-              return Err(ScyllaPyError::SessionError("Session Init err".into()))
+                return Err(ScyllaPyError::SessionError("Session Init err".into()));
             };
 
-            let Ok(result) = session.query("DESCRIBE tables", &[]).await else{
-
-              return Err(ScyllaPyError::SessionError("No table found".into()))
+            let Ok(result) = session.query("DESCRIBE tables", &[]).await else {
+                return Err(ScyllaPyError::SessionError("No table found".into()));
             };
 
             let Ok(mut iter) = result.rows_typed::<(String, String, String)>() else {
-              return Err(ScyllaPyError::SessionError("No table found".into()))
+                return Err(ScyllaPyError::SessionError("No table found".into()));
             };
 
-            while let Ok(Some((_keyspace, _type, table))) = iter.next().transpose(){
-
-                println!("{:?}", table);
-
-                let select_table = session.query_iter(format!("SELECT * FROM {} LIMIT 1", table), &[]).await;
-                if select_table.is_ok(){
-                    self.column_specs.insert(table,Box::new(select_table.unwrap().get_column_specs().to_owned()));
-
+            let mut new_specs = HashMap::new();
+            while let Ok(Some((_keyspace, _type, table))) = iter.next().transpose() {
+                let select_table = session
+                    .query_iter(format!("SELECT * FROM {} LIMIT 1", table), &[])
+                    .await;
+                if select_table.is_ok() {
+                    new_specs.insert(
+                        table,
+                        Box::new(select_table.unwrap().get_column_specs().to_owned()),
+                    );
                 }
+                // session.execute
+            }
 
-            // session.execute
-            }}
-}
+            let mut column_guard = column_specs.write().await;
+            *column_guard = new_specs;
+
+            Ok(())
+        })
+    }
 }

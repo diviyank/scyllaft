@@ -168,7 +168,6 @@ pub fn py_to_value(
     } else if item.is_instance_of::<PyBool>() {
         Ok(ScyllaPyCQLDTO::Bool(item.extract::<bool>()?))
     } else if item.is_instance_of::<PyInt>() {
-        println!("Detected Pyint:: {:?}", column_type);
         match column_type {
             Some(ColumnType::TinyInt) => Ok(ScyllaPyCQLDTO::TinyInt(item.extract::<i8>()?)),
             Some(ColumnType::SmallInt) => Ok(ScyllaPyCQLDTO::SmallInt(item.extract::<i16>()?)),
@@ -611,7 +610,7 @@ pub fn cql_to_py<'a>(
 pub fn parse_python_query_params(
     params: Option<&PyAny>,
     allow_dicts: bool,
-    col_spec: Option<&[ColumnSpec]>,
+    col_spec: Option<Box<Vec<ColumnSpec>>>,
 ) -> ScyllaPyResult<SerializedValues> {
     let mut values = SerializedValues::new();
 
@@ -619,14 +618,15 @@ pub fn parse_python_query_params(
         return Ok(values);
     };
 
-    println!("Im here!");
     // If list was passed, we construct only unnamed parameters.
     // Otherwise it parses dict to named parameters.
     if params.is_instance_of::<PyList>() || params.is_instance_of::<PyTuple>() {
         let params = params.extract::<Vec<&PyAny>>()?;
         for (index, param) in params.iter().enumerate() {
-            let coltype = col_spec.and_then(|specs| specs.get(index)).map(|f| &f.typ);
-            println!("COLTYPE::: {:?}", coltype);
+            let coltype = col_spec
+                .as_ref()
+                .and_then(|specs| specs.get(index))
+                .map(|f| &f.typ);
             let py_dto = py_to_value(param, coltype)?;
             values.add_value(&py_dto)?;
         }
@@ -634,6 +634,7 @@ pub fn parse_python_query_params(
     } else if params.is_instance_of::<PyDict>() {
         if allow_dicts {
             let types_map = col_spec
+                .as_ref()
                 .map(|specs| {
                     specs
                         .iter()
@@ -641,7 +642,6 @@ pub fn parse_python_query_params(
                         .collect::<HashMap<_, _, BuildHasherDefault<rustc_hash::FxHasher>>>()
                 })
                 .unwrap_or_default();
-            println!("TYPES_MAP::: {:?}", types_map);
             // let map = HashMap::with_capacity_and_hasher(, hasher)
             let dict = params
                 .extract::<HashMap<&str, &PyAny, BuildHasherDefault<rustc_hash::FxHasher>>>()?;
