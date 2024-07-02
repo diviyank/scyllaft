@@ -382,13 +382,8 @@ impl Scylla {
         let mut col_spec = None;
         // We need to prepare parameter we're going to use
         // in query.
-        if let ExecuteInput::PreparedQuery(prepared) = &query {
-            col_spec = Some(Box::new(
-                prepared.inner.get_prepared_metadata().col_specs.to_owned(),
-            ));
-        }
-        if col_spec.is_none()
-            && table.is_some()
+
+        if table.is_some()
             && (params.is_some() && params.unwrap().is_instance_of::<PyList>() || columns.is_some())
         {
             col_spec = self.get_col_specs(py, table.unwrap(), columns);

@@ -291,10 +291,10 @@ impl ScyllaPyIterableQueryResult {
 
 #[pyclass(name = "IterablePagedQueryResult")]
 pub struct ScyllaPyIterablePagedQueryResult {
-    inner: Arc<Mutex<Take<ReadyChunks<RowIterator>>>>,
+    inner: Arc<Mutex<RowIterator>>,
     mapper: Option<Py<PyAny>>,
     scalars: bool,
-    // batchsize: usize,
+    batchsize: usize,
     column_specs: Box<Vec<ColumnSpec>>,
 }
 
@@ -304,12 +304,10 @@ impl ScyllaPyIterablePagedQueryResult {
             column_specs: Box::new(results.get_column_specs().to_owned()),
             inner: Arc::new(Mutex::new(
                 results
-                    .ready_chunks((batchsize as f32/2.).ceil() as usize)
-                    .take(batchsize as usize),
             )),
             mapper: None,
             scalars: false,
-            // batchsize: batchsize as usize,
+            batchsize: batchsize as usize,
         }
     }
 }
@@ -339,6 +337,7 @@ impl ScyllaPyIterablePagedQueryResult {
     pub fn __anext__(&self, py: Python<'_>) -> ScyllaPyResult<Option<PyObject>> {
         let streamer = self.inner.clone();
         let col_specs = self.column_specs.clone();
+        let batchsize = self.batchsize.clone();
 
         if self.scalars {
             error!("Scalar mode is not supported");
@@ -351,14 +350,22 @@ impl ScyllaPyIterablePagedQueryResult {
         let future = scyllapy_future(py, async move {
             let mut page_iterator = streamer.lock().await;
 
-            let Some(page_query) = page_iterator.next().await else {
+            let mut page : Vec<Row> = Vec::new();
+
+            while let Some(row) = page_iterator.next().await {
+                if row.is_ok(){
+                    page.push(row.unwrap());
+                }
+                if page.len() == batchsize{
+                    break;
+                }
+            }
+            if page.is_empty(){
                 return Err(PyStopAsyncIteration::new_err("No more rows").into());
             };
 
-            std::mem::drop(page_iterator); // release the mutex
-            let page: Vec<&Result<Row, QueryError>> =
-                page_query.iter().filter(|x| x.is_ok()).collect();
 
+            std::mem::drop(page_iterator); // release the mutex
             // Here we acquire GIL and map page to python object.
             Python::with_gil(move |gil| -> ScyllaPyResult<Py<PyAny>> {
                 // let Some(rows) = self.get_rows(gil, &page, col_spec)? else {
@@ -370,7 +377,7 @@ impl ScyllaPyIterablePagedQueryResult {
                         col_specs.len(),
                         BuildHasherDefault::<rustc_hash::FxHasher>::default(),
                     );
-                    for (col_index, column) in row.as_ref().unwrap().columns.iter().enumerate() {
+                    for (col_index, column) in row.columns.iter().enumerate() {
                         map.insert(
                             col_specs[col_index].name.as_str(),
                             cql_to_py(
@@ -406,13 +413,14 @@ impl ScyllaPyIterablePagedQueryResult {
         // Here we create our future that actually yields page.
         let future = scyllapy_future(py, async move {
             let mut page_iterator = streamer.lock().await;
-            let mut all_pages = Vec::new();
-            while let Some(mut page_query) = page_iterator.next().await {
-                all_pages.append(&mut page_query);
+            let mut page = Vec::new();
+            while let Some(row) = page_iterator.next().await {
+                if row.is_ok(){
+                    page.push(row.unwrap());
+                }
+
             }
 
-            let page: Vec<&Result<Row, QueryError>> =
-                all_pages.iter().filter(|x| x.is_ok()).collect();
             // Here we acquire GIL and map page to python object.
             Python::with_gil(move |gil| -> ScyllaPyResult<Py<PyAny>> {
                 // let Some(rows) = self.get_rows(gil, &page, col_spec)? else {
@@ -424,7 +432,7 @@ impl ScyllaPyIterablePagedQueryResult {
                         col_specs.len(),
                         BuildHasherDefault::<rustc_hash::FxHasher>::default(),
                     );
-                    for (col_index, column) in row.as_ref().unwrap().columns.iter().enumerate() {
+                    for (col_index, column) in row.columns.iter().enumerate() {
                         map.insert(
                             col_specs[col_index].name.as_str(),
                             cql_to_py(
