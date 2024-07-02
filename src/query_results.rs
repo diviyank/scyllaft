@@ -8,7 +8,6 @@ use pyo3::{
     exceptions::PyStopAsyncIteration, pyclass, pymethods, types::PyDict, IntoPy, Py, PyAny,
     PyObject, PyRef, PyRefMut, Python, ToPyObject,
 };
-use pyo3_log;
 use scylla::{frame::response::result::Row, transport::iterator::RowIterator, QueryResult};
 use scylla_cql::{errors::QueryError, frame::response::result::ColumnSpec};
 use std::{collections::HashMap, hash::BuildHasherDefault, sync::Arc};
@@ -305,7 +304,7 @@ impl ScyllaPyIterablePagedQueryResult {
             column_specs: Box::new(results.get_column_specs().to_owned()),
             inner: Arc::new(Mutex::new(
                 results
-                    .ready_chunks((batchsize) as usize)
+                    .ready_chunks((batchsize as f32/2.).ceil() as usize)
                     .take(batchsize as usize),
             )),
             mapper: None,
@@ -342,11 +341,9 @@ impl ScyllaPyIterablePagedQueryResult {
         let col_specs = self.column_specs.clone();
 
         if self.scalars {
-            pyo3_log::init();
             error!("Scalar mode is not supported");
         }
         if self.mapper.is_some() {
-            pyo3_log::init();
             error!("Map class mode is not supported");
         }
 
@@ -400,11 +397,9 @@ impl ScyllaPyIterablePagedQueryResult {
         let col_specs = self.column_specs.clone();
 
         if self.scalars {
-            pyo3_log::init();
             error!("Scalar mode is not supported");
         }
         if self.mapper.is_some() {
-            pyo3_log::init();
             error!("Map class mode is not supported");
         }
 
