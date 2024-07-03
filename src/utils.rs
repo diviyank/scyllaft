@@ -671,14 +671,14 @@ pub fn parse_python_query_params(
     if params.is_instance_of::<PyList>() || params.is_instance_of::<PyTuple>() {
         let params = params.extract::<Vec<&PyAny>>()?;
         for (index, param) in params.iter().enumerate() {
-            let coltype = col_spec.and_then(|specs| specs.get(index)).map(|f| &f.typ);
+            let coltype = col_spec.as_ref().and_then(|specs| specs.get(index)).map(|f| &f.typ);
             let py_dto = py_to_value(param, coltype)?;
             values.add_value(&py_dto)?;
         }
         return Ok(values);
     } else if params.is_instance_of::<PyDict>() {
         if allow_dicts {
-            let types_map = col_spec
+            let types_map = col_spec.as_ref()
                 .map(|specs| {
                     specs
                         .iter()

@@ -59,7 +59,7 @@ impl Scylla {
         py: Python<'a>,
         query: Option<impl Into<Query> + Send + 'static>,
         prepared: Option<PreparedStatement>,
-        values: impl ValueList + Send + 'static,
+        values: impl ValueList + Send + 'static + Sync,
         paged: i32,
     ) -> ScyllaPyResult<&'a PyAny> {
         let session_arc = self.scylla_session.clone();
