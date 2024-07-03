@@ -20,7 +20,7 @@ pub enum ScyllaPyBatchType {
 #[pyclass(name = "Batch")]
 #[derive(Clone)]
 pub struct ScyllaPyBatch {
-    inner: Batch,
+    pub inner: Batch,
     request_params: ScyllaPyRequestParams,
 }
 

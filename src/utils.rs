@@ -1,4 +1,3 @@
-use std::{collections::HashMap, future::Future, hash::BuildHasherDefault, str::FromStr};
 use bigdecimal_04;
 use pyo3::{
     types::{PyBool, PyBytes, PyDict, PyFloat, PyInt, PyList, PyModule, PySet, PyString, PyTuple},
@@ -11,6 +10,7 @@ use scylla::{
     },
     BufMut,
 };
+use std::{collections::HashMap, future::Future, hash::BuildHasherDefault, str::FromStr};
 
 use std::net::IpAddr;
 
@@ -66,7 +66,7 @@ pub fn add_submodule(
 /// If result of a future was unsuccessful, it propagates the error.
 pub fn scyllapy_future<F, T>(py: Python<'_>, fut: F) -> ScyllaPyResult<&PyAny>
 where
-    F: Future<Output = ScyllaPyResult<T>> + Send + 'static ,
+    F: Future<Output = ScyllaPyResult<T>> + Send + 'static,
     T: IntoPy<PyObject>,
 {
     let res = pyo3_asyncio::tokio::future_into_py(py, async { fut.await.map_err(Into::into) })
@@ -369,7 +369,7 @@ pub fn cql_to_py<'a>(
             .ok_or(ScyllaPyError::ValueDowncastError(col_name.into(), "Double"))
             .map(|val| val.to_object(py).into_ref(py)),
         ColumnType::Float => unwrapped_value
-            .as_double()
+            .as_float()
             .ok_or(ScyllaPyError::ValueDowncastError(col_name.into(), "Float"))
             .map(|val| val.to_object(py).into_ref(py)),
         ColumnType::Int => unwrapped_value
@@ -658,7 +658,7 @@ pub fn cql_to_py<'a>(
 pub fn parse_python_query_params(
     params: Option<&PyAny>,
     allow_dicts: bool,
-    col_spec: Option<Vec<ColumnSpec>>,
+    col_spec: Option<&[ColumnSpec]>,
 ) -> ScyllaPyResult<LegacySerializedValues> {
     let mut values = LegacySerializedValues::new();
 
@@ -671,14 +671,18 @@ pub fn parse_python_query_params(
     if params.is_instance_of::<PyList>() || params.is_instance_of::<PyTuple>() {
         let params = params.extract::<Vec<&PyAny>>()?;
         for (index, param) in params.iter().enumerate() {
-            let coltype = col_spec.as_ref().and_then(|specs| specs.get(index)).map(|f| &f.typ);
+            let coltype = col_spec
+                .as_ref()
+                .and_then(|specs| specs.get(index))
+                .map(|f| &f.typ);
             let py_dto = py_to_value(param, coltype)?;
             values.add_value(&py_dto)?;
         }
         return Ok(values);
     } else if params.is_instance_of::<PyDict>() {
         if allow_dicts {
-            let types_map = col_spec.as_ref()
+            let types_map = col_spec
+                .as_ref()
                 .map(|specs| {
                     specs
                         .iter()
