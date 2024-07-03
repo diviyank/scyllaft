@@ -1,5 +1,5 @@
-[![PyPI](https://img.shields.io/pypi/v/scyllapy?style=for-the-badge)](https://pypi.org/project/scyllaft/)
-[![PyPI - Downloads](https://img.shields.io/pypi/dm/scyllapy?style=for-the-badge)](https://pypistats.org/packages/scyllaft)
+[![PyPI](https://img.shields.io/pypi/v/scyllaft?style=for-the-badge)](https://pypi.org/project/scyllaft/)
+[![PyPI - Downloads](https://img.shields.io/pypi/dm/scyllaft?style=for-the-badge)](https://pypistats.org/packages/scyllaft)
 
 
 # Async Scylla driver for python
@@ -47,6 +47,34 @@ if __name__ == "__main__":
     asyncio.run(main())
 
 ```
+
+## Mapping of Scylla/Python Types
+
+| Scylla type | Python type            |
+| ----------- | ---------------------- |
+| int         | int                    |
+| tinyint     | extra_types.TinyInt    |
+| bigint      | extra_types.BigInt     |
+| varint      | any int type           |
+| float       | float                  |
+| double      | extra_types.Double     |
+| decimal     | decimal.Decimal        |
+| ascii       | str                    |
+| text        | str                    |
+| varchar     | str                    |
+| blob        | bytes                  |
+| boolean     | bool                   |
+| counter     | extra_types.Counter    |
+| date        | datetime.date          |
+| uuid        | uuid.UUID              |
+| inet        | ipaddress              |
+| time        | datetime.time          |
+| timestamp   | datetime.datetime      |
+| duration    | dateutil.relativedelta |
+
+All types from `extra_types` module are used to eliminate any possible ambiguity while passing parameters to queries. You can find more information about them in `Extra types` section.
+
+We use relative delta from `dateutil` for duration, because it's the only way to represent it in python. Since scylla operates with months, days and nanosecond, there's no way we can represent it in python, because months are variable length.
 
 ## Parametrizing queries
 
