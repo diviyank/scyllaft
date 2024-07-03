@@ -11,6 +11,7 @@ pub mod query_builder;
 pub mod query_results;
 pub mod scylla_cls;
 pub mod utils;
+pub mod utils_2;
 
 use pyo3::{pymodule, types::PyModule, PyResult, Python};
 

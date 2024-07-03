@@ -31,7 +31,7 @@ pub enum ScyllaPyError {
 
     // Binding errors
     #[error("Binding error. Cannot build values for query: {0},")]
-    ScyllaValueError(#[from] scylla::frame::value::SerializeValuesError),
+    ScyllaValueError(#[from] scylla::serialize::SerializationError),
     #[error("Binding error. Cannot parse time, because of: {0}.")]
     DateParseError(#[from] chrono::ParseError),
     #[error("Binding error. Cannot parse ip address, because of: {0}.")]

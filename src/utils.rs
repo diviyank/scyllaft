@@ -113,7 +113,7 @@ impl SerializeCql for ScyllaPyCQLDTO {
         typ: &ColumnType,
         writer: CellWriter<'b>,) -> Result<WrittenCellProof<'b>, SerializationError> {
         match self {
-            ScyllaPyCQLDTO::String(string) => string.serialize( writer),
+            ScyllaPyCQLDTO::String(string) => SerializeCql::serialize(&string, typ, writer),
             ScyllaPyCQLDTO::BigInt(bigint) => bigint.serialize(buf),
             ScyllaPyCQLDTO::Int(int) => int.serialize(buf),
             ScyllaPyCQLDTO::SmallInt(smallint) => smallint.serialize(buf),
@@ -129,7 +129,7 @@ impl SerializeCql for ScyllaPyCQLDTO {
             ScyllaPyCQLDTO::Counter(counter) => counter.serialize(buf),
             ScyllaPyCQLDTO::TinyInt(tinyint) => tinyint.serialize(buf),
             ScyllaPyCQLDTO::Date(date) => date.serialize(buf),
-            ScyllaPyCQLDTO::Time(time) => scylla::frame::value::Time(*time).serialize(buf),
+            ScyllaPyCQLDTO::Time(time) => scylla::frame::value::CqlTime(*time).serialize(buf),
             ScyllaPyCQLDTO::Map(map) => map
                 .iter()
                 .cloned()
@@ -632,7 +632,7 @@ pub fn parse_python_query_params(
                 .and_then(|specs| specs.get(index))
                 .map(|f| &f.typ);
             let py_dto = py_to_value(param, coltype)?;
-            values.add_value(&py_dto.into())?;
+            values.add_value(&py_dto, coltype.unwrap())?;
         }
         return Ok(values);
     } else if params.is_instance_of::<PyDict>() {
