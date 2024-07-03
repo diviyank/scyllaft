@@ -8,8 +8,11 @@ use pyo3::{
     exceptions::PyStopAsyncIteration, pyclass, pymethods, types::PyDict, IntoPy, Py, PyAny,
     PyObject, PyRef, PyRefMut, Python, ToPyObject,
 };
-use scylla::{frame::response::result::Row, transport::iterator::RowIterator, QueryResult};
-use scylla_cql::frame::response::result::ColumnSpec;
+use scylla::{
+    frame::response::result::{ColumnSpec, Row},
+    transport::iterator::RowIterator,
+    QueryResult,
+};
 use std::{collections::HashMap, hash::BuildHasherDefault, sync::Arc};
 use tokio::sync::Mutex;
 pub enum ScyllaPyQueryReturns {
@@ -295,16 +298,14 @@ pub struct ScyllaPyIterablePagedQueryResult {
     mapper: Option<Py<PyAny>>,
     scalars: bool,
     batchsize: usize,
-    column_specs: Box<Vec<ColumnSpec>>,
+    column_specs: Vec<ColumnSpec>,
 }
 
 impl ScyllaPyIterablePagedQueryResult {
     pub fn new(results: RowIterator, batchsize: i32) -> Self {
         Self {
-            column_specs: Box::new(results.get_column_specs().to_owned()),
-            inner: Arc::new(Mutex::new(
-                results
-            )),
+            column_specs: results.get_column_specs().to_owned(),
+            inner: Arc::new(Mutex::new(results)),
             mapper: None,
             scalars: false,
             batchsize: batchsize as usize,
@@ -350,23 +351,22 @@ impl ScyllaPyIterablePagedQueryResult {
         let future = scyllapy_future(py, async move {
             let mut page_iterator = streamer.lock().await;
 
-            let mut page : Vec<Row> = Vec::new();
+            let mut page: Vec<Row> = Vec::new();
 
             while let Some(row) = page_iterator.next().await {
-                if row.is_ok(){
+                if row.is_ok() {
                     page.push(row.unwrap());
                 }
-                if page.len() == batchsize{
+                if page.len() == batchsize {
                     break;
                 }
             }
-            if page.is_empty(){
+            if page.is_empty() {
                 return Err(PyStopAsyncIteration::new_err("No more rows").into());
             };
 
-
             std::mem::drop(page_iterator); // release the mutex
-            // Here we acquire GIL and map page to python object.
+                                           // Here we acquire GIL and map page to python object.
             Python::with_gil(move |gil| -> ScyllaPyResult<Py<PyAny>> {
                 // let Some(rows) = self.get_rows(gil, &page, col_spec)? else {
                 //     return Err(ScyllaPyError::NoReturnsError);
@@ -415,10 +415,9 @@ impl ScyllaPyIterablePagedQueryResult {
             let mut page_iterator = streamer.lock().await;
             let mut page = Vec::new();
             while let Some(row) = page_iterator.next().await {
-                if row.is_ok(){
+                if row.is_ok() {
                     page.push(row.unwrap());
                 }
-
             }
 
             // Here we acquire GIL and map page to python object.

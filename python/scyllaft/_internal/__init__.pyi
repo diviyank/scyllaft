@@ -71,13 +71,10 @@ class Scylla:
         :param disallow_shard_aware_port: If true, prevents the driver from connecting
             to the shard-aware port, even if the node supports it.
         """
-
     async def startup(self) -> None:
         """Initialize the custer."""
-
     async def shutdown(self) -> None:
         """Shutdown the cluster."""
-
     async def prepare(self, query: str | Query) -> PreparedQuery: ...
     @overload
     async def execute(  # type: ignore
@@ -107,7 +104,6 @@ class Scylla:
             (Can be pydantic model or dataclass).
         :param paged: Whether to use paging. Default if false.
         """
-
     @overload
     async def execute(
         self,
@@ -134,6 +130,7 @@ class Scylla:
         params: Optional[Iterable[Iterable[Any] | dict[str, Any]]] = None,
         table: str | None = None,
         columns: List[str] | None = None,
+        single_query: bool = True,
     ) -> QueryResult:
         """
         Execute a batch statement.
@@ -145,11 +142,9 @@ class Scylla:
 
         It may speed up you application.
         """
-
     async def refresh_column_specs(self, table: Optional[str] = None) -> None: ...
     async def use_keyspace(self, keyspace: str) -> None:
         """Change current keyspace for all connections."""
-
     async def get_keyspace(self) -> str | None:
         """Get current keyspace."""
 

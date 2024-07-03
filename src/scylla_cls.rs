@@ -16,8 +16,12 @@ use openssl::{
     x509::X509,
 };
 use pyo3::{pyclass, pymethods, types::PyList, PyAny, Python};
-use scylla::{frame::value::ValueList, prepared_statement::PreparedStatement, query::Query};
-use scylla_cql::frame::response::result::ColumnSpec;
+use scylla::{
+    batch::BatchStatement,
+    frame::{response::result::ColumnSpec, value::ValueList},
+    prepared_statement::PreparedStatement,
+    query::Query,
+};
 
 #[pyclass(frozen, weakref)]
 #[derive(Clone)]
@@ -38,7 +42,7 @@ pub struct Scylla {
     tcp_nodelay: Option<bool>,
     default_execution_profile: Option<ScyllaPyExecutionProfile>,
     scylla_session: Arc<tokio::sync::RwLock<Option<scylla::Session>>>,
-    column_specs: Arc<tokio::sync::RwLock<HashMap<String, Box<Vec<ColumnSpec>>>>>,
+    column_specs: Arc<tokio::sync::RwLock<HashMap<String, Vec<ColumnSpec>>>>,
 }
 
 impl Scylla {
@@ -59,7 +63,7 @@ impl Scylla {
         py: Python<'a>,
         query: Option<impl Into<Query> + Send + 'static>,
         prepared: Option<PreparedStatement>,
-        values: impl ValueList + Send + 'static,
+        values: impl ValueList + Send + 'static + Sync,
         paged: i32,
     ) -> ScyllaPyResult<&'a PyAny> {
         let session_arc = self.scylla_session.clone();
@@ -75,7 +79,7 @@ impl Scylla {
                         query_s.set_page_size(paged);
                         Ok(ScyllaPyQueryReturns::IterablePagedQueryResult(
                             ScyllaPyIterablePagedQueryResult::new(
-                                session.query_iter(query_s, values).await?,
+                                session.query_iter(query_s, values.serialized()?).await?,
                                 paged,
                             ),
                         ))
@@ -84,7 +88,7 @@ impl Scylla {
                         prepared.set_page_size(paged);
                         Ok(ScyllaPyQueryReturns::IterablePagedQueryResult(
                             ScyllaPyIterablePagedQueryResult::new(
-                                session.execute_iter(prepared, values).await?,
+                                session.execute_iter(prepared, values.serialized()?).await?,
                                 paged,
                             ),
                         ))
@@ -96,11 +100,13 @@ impl Scylla {
             } else if paged == 1 {
                 match (query, prepared) {
                     (Some(query), None) => Ok(ScyllaPyQueryReturns::IterableQueryResult(
-                        ScyllaPyIterableQueryResult::new(session.query_iter(query, values).await?),
+                        ScyllaPyIterableQueryResult::new(
+                            session.query_iter(query, values.serialized()?).await?,
+                        ),
                     )),
                     (None, Some(prepared)) => Ok(ScyllaPyQueryReturns::IterableQueryResult(
                         ScyllaPyIterableQueryResult::new(
-                            session.execute_iter(prepared, values).await?,
+                            session.execute_iter(prepared, values.serialized()?).await?,
                         ),
                     )),
                     _ => Err(ScyllaPyError::SessionError(
@@ -110,11 +116,13 @@ impl Scylla {
             } else {
                 match (query, prepared) {
                     (Some(query), None) => Ok(ScyllaPyQueryReturns::QueryResult(
-                        ScyllaPyQueryResult::new(session.query(query, values).await?),
+                        ScyllaPyQueryResult::new(session.query(query, values.serialized()?).await?),
                     )),
-                    (None, Some(prepared)) => Ok(ScyllaPyQueryReturns::QueryResult(
-                        ScyllaPyQueryResult::new(session.execute(&prepared, values).await?),
-                    )),
+                    (None, Some(prepared)) => {
+                        Ok(ScyllaPyQueryReturns::QueryResult(ScyllaPyQueryResult::new(
+                            session.execute(&prepared, values.serialized()?).await?,
+                        )))
+                    }
                     _ => Err(ScyllaPyError::SessionError(
                         "You should pass either query or prepared query.".into(),
                     )),
@@ -129,25 +137,30 @@ impl Scylla {
         py: Python<'a>,
         name: String,
         columns: Option<Vec<String>>,
-    ) -> Option<Box<Vec<ColumnSpec>>> {
+    ) -> Option<Vec<ColumnSpec>> {
         let column_specs = self.column_specs.clone();
         let col_specs = column_specs.try_read().unwrap();
         if !col_specs.contains_key(&name) {
             let _ = self.refresh_column_specs(py, Some(name.clone()));
         }
-        let mut specs = col_specs[&name].clone();
+        // NOTE: Do we need a clone here?
+        let mut specs = col_specs.get(&name).cloned();
 
-        if let Some(columns_unwrap) = columns {
+        if columns.is_some() {
+            if let Some(mut specs_) = specs {
+                let columns_unwrap = columns.unwrap();
 
-            let order_map: HashMap<_, _> = columns_unwrap
-                .iter()
-                .enumerate()
-                .map(|(i, name)| (name, i))
-                .collect();
-            specs.sort_by_key(|spec| order_map.get(&spec.name).cloned().unwrap_or(usize::MAX));
-            // new_specs = let mut Vec<ColumnSpec>;
+                let order_map: HashMap<_, _> = columns_unwrap
+                    .iter()
+                    .enumerate()
+                    .map(|(i, name)| (name, i))
+                    .collect();
+                specs_.sort_by_key(|spec| order_map.get(&spec.name).copied());
+                specs = Some(specs_)
+                // new_specs = let mut Vec<ColumnSpec>;
+            }
         }
-        Some(specs)
+        specs
     }
 }
 #[pymethods]
@@ -324,10 +337,7 @@ impl Scylla {
                     .query_iter(format!("SELECT * FROM {} LIMIT 1", table), &[])
                     .await;
                 if select_table.is_ok() {
-                    new_specs.insert(
-                        table,
-                        Box::new(select_table.unwrap().get_column_specs().to_owned()),
-                    );
+                    new_specs.insert(table, select_table.unwrap().get_column_specs().to_owned());
                 }
                 // session.execute
             }
@@ -382,13 +392,16 @@ impl Scylla {
         let mut col_spec = None;
         // We need to prepare parameter we're going to use
         // in query.
-
-        if table.is_some()
+        if let ExecuteInput::PreparedQuery(prepared) = &query {
+            col_spec = Some(prepared.inner.get_variable_col_specs().to_owned());
+        }
+        if col_spec.is_none()
+            && table.is_some()
             && (params.is_some() && params.unwrap().is_instance_of::<PyList>() || columns.is_some())
         {
             col_spec = self.get_col_specs(py, table.unwrap(), columns);
         }
-        let query_params = parse_python_query_params(params, true, col_spec)?;
+        let query_params = parse_python_query_params(params, true, col_spec.as_deref())?;
         // We need this clone, to safely share the session between threads.
         let (query, prepared) = match query {
             ExecuteInput::Text(txt) => (Some(Query::new(txt)), None),
@@ -401,7 +414,7 @@ impl Scylla {
     /// Execute a batch statement.
     ///
     /// This function takes a batch and list of lists of params.
-    #[pyo3(signature = (batch, params = None, table=None, columns=None))]
+    #[pyo3(signature = (batch, params = None, table=None, columns=None, single_query=true))]
     pub fn batch<'a>(
         &'a self,
         py: Python<'a>,
@@ -409,6 +422,7 @@ impl Scylla {
         params: Option<Vec<&'a PyAny>>,
         table: Option<String>,
         columns: Option<Vec<String>>,
+        single_query: bool,
     ) -> ScyllaPyResult<&'a PyAny> {
         // We need to prepare parameter we're going to use
         // in query.
@@ -416,19 +430,23 @@ impl Scylla {
         // to corresponding CQL values.
         let mut col_spec = None;
 
-        if table.is_some() && columns.is_some() {
-            col_spec = self.get_col_specs(py, table.unwrap(), columns);
-        }
-
         let (batch, batch_params) = match batch {
             BatchInput::Batch(batch) => {
                 let mut batch_params = Vec::new();
+                if single_query {
+                    if let BatchStatement::PreparedStatement(ps) = &batch.inner.statements[0] {
+                        col_spec = Some(ps.get_variable_col_specs().to_owned());
+                    };
+                    if col_spec.is_none() && table.is_some() && columns.is_some() {
+                        col_spec = self.get_col_specs(py, table.unwrap(), columns);
+                    }
+                }
                 if let Some(passed_params) = params {
                     for query_params in passed_params {
                         batch_params.push(parse_python_query_params(
                             Some(query_params),
                             false,
-                            col_spec.clone(),
+                            col_spec.as_deref(),
                         )?);
                     }
                 }
@@ -506,10 +524,7 @@ impl Scylla {
                     .query_iter(format!("SELECT * FROM {} LIMIT 1", table), &[])
                     .await;
                 if select_table.is_ok() {
-                    new_specs.insert(
-                        table,
-                        Box::new(select_table.unwrap().get_column_specs().to_owned()),
-                    );
+                    new_specs.insert(table, select_table.unwrap().get_column_specs().to_owned());
                 }
                 // session.execute
             }
@@ -574,10 +589,8 @@ impl Scylla {
                         .query_iter(format!("SELECT * FROM {} LIMIT 1", table), &[])
                         .await;
                     if select_table.is_ok() {
-                        new_specs.insert(
-                            table,
-                            Box::new(select_table.unwrap().get_column_specs().to_owned()),
-                        );
+                        new_specs
+                            .insert(table, select_table.unwrap().get_column_specs().to_owned());
                     }
                 }
                 let mut column_guard = column_specs.write().await;
@@ -593,7 +606,7 @@ impl Scylla {
                     let mut column_guard = column_specs.write().await;
                     column_guard.insert(
                         table.unwrap(),
-                        Box::new(select_table.unwrap().get_column_specs().to_owned()),
+                        select_table.unwrap().get_column_specs().to_owned(),
                     );
                 }
             }
