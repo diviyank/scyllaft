@@ -19,19 +19,19 @@ pub enum ScyllaPyError {
 
     // Derived exception.
     #[error("{0}")]
-    QueryError(#[from] scylla_cql::errors::QueryError),
+    QueryError(#[from] scylla::transport::errors::QueryError),
     #[error("{0}")]
-    DBError(#[from] scylla_cql::errors::DbError),
+    DBError(#[from] scylla::transport::errors::DbError),
     #[error("Python exception: {0}.")]
     PyError(#[from] pyo3::PyErr),
     #[error("OpenSSL error: {0}.")]
     SSLError(#[from] openssl::error::ErrorStack),
     #[error("Cannot construct new session: {0}.")]
-    ScyllaSessionError(#[from] scylla_cql::errors::NewSessionError),
+    ScyllaSessionError(#[from] scylla::transport::errors::NewSessionError),
 
     // Binding errors
     #[error("Binding error. Cannot build values for query: {0},")]
-    ScyllaValueError(#[from] scylla::serialize::SerializationError),
+    ScyllaValueError(#[from] scylla::frame::value::SerializeValuesError),
     #[error("Binding error. Cannot parse time, because of: {0}.")]
     DateParseError(#[from] chrono::ParseError),
     #[error("Binding error. Cannot parse ip address, because of: {0}.")]
