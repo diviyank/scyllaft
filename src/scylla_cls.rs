@@ -137,15 +137,14 @@ impl Scylla {
         }
         let mut specs = col_specs[&name].clone();
 
-        if columns.is_some() {
-            let columns_unwrap = columns.unwrap();
+        if let Some(columns_unwrap) = columns {
 
             let order_map: HashMap<_, _> = columns_unwrap
                 .iter()
                 .enumerate()
                 .map(|(i, name)| (name, i))
                 .collect();
-            specs.sort_by_key(|spec| order_map.get(&spec.name).copied());
+            specs.sort_by_key(|spec| order_map.get(&spec.name).cloned().unwrap_or(usize::MAX));
             // new_specs = let mut Vec<ColumnSpec>;
         }
         Some(specs)

@@ -2,14 +2,14 @@ use crate::{
     exceptions::rust_err::{ScyllaPyError, ScyllaPyResult},
     utils::{cql_to_py, map_rows, scyllapy_future},
 };
-use futures::{prelude::stream::ReadyChunks, stream::Take, StreamExt};
+use futures::StreamExt;
 use log::error;
 use pyo3::{
     exceptions::PyStopAsyncIteration, pyclass, pymethods, types::PyDict, IntoPy, Py, PyAny,
     PyObject, PyRef, PyRefMut, Python, ToPyObject,
 };
 use scylla::{frame::response::result::Row, transport::iterator::RowIterator, QueryResult};
-use scylla_cql::{errors::QueryError, frame::response::result::ColumnSpec};
+use scylla_cql::frame::response::result::ColumnSpec;
 use std::{collections::HashMap, hash::BuildHasherDefault, sync::Arc};
 use tokio::sync::Mutex;
 pub enum ScyllaPyQueryReturns {
