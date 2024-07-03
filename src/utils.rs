@@ -8,19 +8,21 @@ use pyo3::{
 use scylla::{
     frame::{
         response::result::{ColumnType, CqlValue},
-        value::{SerializedValues, Value},
+        value::Value,
     },
-    BufMut,
-};
-use scylla_cql::frame::response::result::ColumnSpec;
+    BufMut, SerializeRow,
 
+};
+
+use scylla_cql::{frame::response::result::ColumnSpec, types::serialize::value::SerializeCql};
+use scylla_cql::types::serialize::{writers::WrittenCellProof,{CellWriter, SerializationError}};
 use std::net::IpAddr;
 
 use crate::{
     exceptions::rust_err::{ScyllaPyError, ScyllaPyResult},
     extra_types::{BigInt, Counter, Double, ScyllaPyUnset, SmallInt, TinyInt},
 };
-
+use scylla::serialize::row::SerializedValues;
 /// Add submodule.
 ///
 /// This function is required,
@@ -79,7 +81,7 @@ where
 /// This enum implements Value interface,
 /// and any of it's variants can
 /// be bound to query.
-#[derive(Clone, Hash, PartialEq, Eq, Debug)]
+#[derive(Clone, Hash, PartialEq, Eq, Debug, )]
 pub enum ScyllaPyCQLDTO {
     Null,
     Unset,
@@ -106,10 +108,12 @@ pub enum ScyllaPyCQLDTO {
     Udt(Vec<u8>),
 }
 
-impl Value for ScyllaPyCQLDTO {
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), scylla::_macro_internal::ValueTooBig> {
+impl SerializeCql for ScyllaPyCQLDTO {
+    fn serialize<'b>(&self,
+        typ: &ColumnType,
+        writer: CellWriter<'b>,) -> Result<WrittenCellProof<'b>, SerializationError> {
         match self {
-            ScyllaPyCQLDTO::String(string) => string.serialize(buf),
+            ScyllaPyCQLDTO::String(string) => string.serialize( writer),
             ScyllaPyCQLDTO::BigInt(bigint) => bigint.serialize(buf),
             ScyllaPyCQLDTO::Int(int) => int.serialize(buf),
             ScyllaPyCQLDTO::SmallInt(smallint) => smallint.serialize(buf),
@@ -628,7 +632,7 @@ pub fn parse_python_query_params(
                 .and_then(|specs| specs.get(index))
                 .map(|f| &f.typ);
             let py_dto = py_to_value(param, coltype)?;
-            values.add_value(&py_dto)?;
+            values.add_value(&py_dto.into())?;
         }
         return Ok(values);
     } else if params.is_instance_of::<PyDict>() {

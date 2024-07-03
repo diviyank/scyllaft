@@ -10,7 +10,8 @@ use crate::{
 };
 
 use super::utils::{pretty_build, IfCluase, Timeout};
-use scylla::frame::value::SerializedValues;
+use scylla_cql::types::serialize::row::SerializedValues;
+
 #[derive(Clone, Debug)]
 enum UpdateAssignment {
     Simple(String),

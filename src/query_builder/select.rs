@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::utils::{pretty_build, Timeout};
-use scylla::frame::value::SerializedValues;
+use scylla::serialize::row::SerializedValues;
 
 #[pyclass]
 #[derive(Clone, Debug, Default)]
