@@ -1,13 +1,14 @@
+use futures::Future;
 use pyo3::{
     pyclass, pymethods,
     types::{PyDict, PyTuple},
-    PyAny, PyRefMut, Python,
+    Py, PyAny, PyRefMut, Python,
 };
-use scylla::query::Query;
+use scylla::{prepared_statement::PreparedStatement, query::Query, transport::errors::{QueryError, DbError}};
 
 use crate::{
     batches::ScyllaPyInlineBatch,
-    exceptions::rust_err::ScyllaPyResult,
+    exceptions::rust_err::{ScyllaPyResult, ScyllaPyError},
     queries::ScyllaPyRequestParams,
     scylla_cls::Scylla,
     utils::{py_to_value, ScyllaPyCQLDTO},
@@ -31,7 +32,7 @@ pub struct Select {
     columns_: Option<Vec<String>>,
     where_clauses_: Vec<String>,
     values_: Vec<ScyllaPyCQLDTO>,
-
+    raw_values_: Vec<Py<PyAny>>,
     request_params_: ScyllaPyRequestParams,
 }
 
@@ -105,6 +106,18 @@ impl Select {
             timeout.as_str(),
         ])
     }
+    fn prepare_query<'a>(
+        &'a self,
+        scylla: &'a Scylla,
+        query: Query,
+    ) -> impl Future<Output = Result<PreparedStatement, QueryError>> + 'a{
+        async {
+        let session_arc = scylla.scylla_session.clone();
+        let session_guard = session_arc.read().await;
+        let session = session_guard.as_ref().ok_or(QueryError::DbError((DbError::Invalid), "Session is not Created.".into()))?;
+            session.prepare(query).await
+        }
+    }
 }
 
 #[pymethods]
@@ -154,6 +167,7 @@ impl Select {
         if let Some(vals) = values {
             for value in vals {
                 slf.values_.push(py_to_value(value, None)?);
+                slf.raw_values_.push(value.into());
             }
         }
         Ok(slf)
@@ -248,7 +262,10 @@ impl Select {
     ) -> ScyllaPyResult<&'a PyAny> {
         let mut query = Query::new(self.build_query());
         self.request_params_.apply_to_query(&mut query);
-        scylla.native_execute(py, Some(query), None, self.values_.clone(), paged)
+        let prepared = async {
+        self.prepare_query(scylla, query).await
+        };
+        scylla.native_execute(py, Some(prepared), None, self.values_.clone(), paged)
     }
 
     /// Add to batch

@@ -41,7 +41,7 @@ pub struct Scylla {
     tcp_keepalive_interval: Option<u64>,
     tcp_nodelay: Option<bool>,
     default_execution_profile: Option<ScyllaPyExecutionProfile>,
-    scylla_session: Arc<tokio::sync::RwLock<Option<scylla::Session>>>,
+    pub scylla_session: Arc<tokio::sync::RwLock<Option<scylla::Session>>>,
     column_specs: Arc<tokio::sync::RwLock<HashMap<String, Vec<ColumnSpec>>>>,
 }
 
