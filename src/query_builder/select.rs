@@ -265,7 +265,8 @@ impl Select {
         let prepared = async {
         self.prepare_query(scylla, query).await
         };
-        scylla.native_execute(py, Some(prepared), None, self.values_.clone(), paged)
+
+        scylla.execute_async(py, Some(prepared), None, self.values_.clone(), paged)
     }
 
     /// Add to batch
