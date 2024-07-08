@@ -18,9 +18,10 @@ use openssl::{
 use pyo3::{pyclass, pymethods, types::PyList, PyAny, Python};
 use scylla::{
     batch::BatchStatement,
-    frame::{response::result::ColumnSpec, value::ValueList},
+    frame::{response::result::ColumnSpec, value::{ValueList, LegacySerializedValues}},
     prepared_statement::PreparedStatement,
     query::Query,
+     transport::errors::{QueryError, DbError}
 };
 
 #[pyclass(frozen, weakref)]
@@ -176,35 +177,33 @@ impl Scylla {
     pub fn execute_prepared_async<'a>(
         &'a self,
         py: Python<'a>,
-        query: dyn Future<Output=Result<PreparedStatement, QueryError>>,
+        query: impl Future<Output=Result<PreparedStatement, QueryError>>,
         params: Option<&'a PyAny>,
         paged: i32,
     ) -> ScyllaPyResult<&'a PyAny> {
-        let mut col_spec = None;
         // We need to prepare parameter we're going to use
         // in query.
-        if let ExecuteInput::PreparedQuery(prepared) = &query {
-            col_spec = Some(prepared.inner.get_variable_col_specs().to_owned());
+        let mut col_spec: Option<Vec<ColumnSpec>>= None;
+        let mut query_awaited;
+        let mut query_params:LegacySerializedValues;
+
+        let res = async {
+            let query_awaited = query.await.unwrap();
+            let col_spec =Some( query_awaited.get_variable_col_specs().to_owned());
+            let query_params = parse_python_query_params(params, true, col_spec.as_deref())?;
+            Ok::<(), ScyllaPyError>(())
+            };
+            self.native_execute(py, None::<Query>, Some(query_awaited), query_params, paged)
         }
 
-        let query_params = parse_python_query_params(params, true, col_spec.as_deref())?;
-        // We need this clone, to safely share the session between threads.
-        let (query, prepared) = match query {
-            ExecuteInput::Text(txt) => (Some(Query::new(txt)), None),
-            ExecuteInput::Query(query) => (Some(Query::from(query)), None),
-            ExecuteInput::PreparedQuery(prep) => (None, Some(PreparedStatement::from(prep))),
-        };
-        self.native_execute(py, query, prepared, query_params, paged)
-    }
-
-fn prepare_query<'a>(
+    fn prepare_query_async<'a>(
         &'a self,
         query: Query,
     ) -> impl Future<Output = Result<PreparedStatement, QueryError>> + 'a{
         async {
         let session_arc = self.scylla_session.clone();
         let session_guard = session_arc.read().await;
-        let session = session_guard.as_ref().ok_or(QueryError::DbError((DbError::Invalid), "Session is not Created.".into()))?;
+        let session = session_guard.as_ref().ok_or(QueryError::DbError(DbError::Invalid, "Session is not Created.".into()))?;
             session.prepare(query).await
         }
     }

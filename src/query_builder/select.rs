@@ -266,7 +266,7 @@ impl Select {
         self.prepare_query(scylla, query).await
         };
 
-        scylla.execute_async(py, Some(prepared), None, self.values_.clone(), paged)
+        scylla.execute_prepared_async(py, prepared, self.raw_values_.clone(), paged)
     }
 
     /// Add to batch
