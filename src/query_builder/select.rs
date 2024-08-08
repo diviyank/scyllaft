@@ -1,8 +1,8 @@
 use futures::Future;
 use pyo3::{
     pyclass, pymethods,
-    types::{PyDict, PyTuple},
-    Py, PyAny, PyRefMut, Python,
+    types::{PyDict, PyTuple, PyList},
+    Py, PyAny, PyRefMut, Python
 };
 use scylla::{prepared_statement::PreparedStatement, query::Query, transport::errors::{QueryError, DbError}};
 
@@ -11,8 +11,9 @@ use crate::{
     exceptions::rust_err::{ScyllaPyResult, ScyllaPyError},
     queries::ScyllaPyRequestParams,
     scylla_cls::Scylla,
-    utils::{py_to_value, ScyllaPyCQLDTO},
+    utils::{parse_python_query_params, py_to_value, ScyllaPyCQLDTO},
 };
+use tokio::runtime::Runtime;
 
 use super::utils::{pretty_build, Timeout};
 use scylla::frame::value::LegacySerializedValues;
@@ -262,11 +263,14 @@ impl Select {
     ) -> ScyllaPyResult<&'a PyAny> {
         let mut query = Query::new(self.build_query());
         self.request_params_.apply_to_query(&mut query);
-        let prepared = async {
-        self.prepare_query(scylla, query).await
-        };
+        let prepared = Runtime::new().unwrap().block_on(
+        self.prepare_query(scylla, query)
+        ).unwrap();
 
-        scylla.execute_prepared_async(py, prepared, self.raw_values_.clone(), paged)
+        let col_spec =Some( prepared.get_variable_col_specs().to_owned());
+        let values = PyList::new(py, self.raw_values_.clone());
+        let params = parse_python_query_params(Some(values), true, col_spec.as_deref())?;
+        scylla.native_execute(py, None::<Query>, Some(prepared), params, paged)
     }
 
     /// Add to batch

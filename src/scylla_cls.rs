@@ -1,4 +1,4 @@
-use std::{collections::HashMap, num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{collections::HashMap, num::NonZeroUsize, sync::Arc, time::Duration, borrow::BorrowMut};
 use futures::Future;
 use crate::{
     exceptions::rust_err::{ScyllaPyError, ScyllaPyResult},
@@ -15,7 +15,7 @@ use openssl::{
     ssl::{SslContextBuilder, SslMethod, SslVerifyMode},
     x509::X509,
 };
-use pyo3::{pyclass, pymethods, types::PyList, PyAny, Python};
+use pyo3::{pyclass, pymethods, Py, types::PyList, PyAny, Python};
 use scylla::{
     batch::BatchStatement,
     frame::{response::result::ColumnSpec, value::{ValueList, LegacySerializedValues}},
@@ -163,39 +163,6 @@ impl Scylla {
         }
         specs
     }
-    /// Execute a query.
-    ///
-    /// This function takes a query and other parameters
-    /// for performing actual request to the database.
-    ///
-    /// It creates a python future and executes
-    /// the query, using it's `scylla_session`.
-    ///
-    /// # Errors
-    ///
-    /// Can result in an error in any case, when something goes wrong.
-    pub fn execute_prepared_async<'a>(
-        &'a self,
-        py: Python<'a>,
-        query: impl Future<Output=Result<PreparedStatement, QueryError>>,
-        params: Option<&'a PyAny>,
-        paged: i32,
-    ) -> ScyllaPyResult<&'a PyAny> {
-        // We need to prepare parameter we're going to use
-        // in query.
-        let mut col_spec: Option<Vec<ColumnSpec>>= None;
-        let mut query_awaited;
-        let mut query_params:LegacySerializedValues;
-
-        let res = async {
-            let query_awaited = query.await.unwrap();
-            let col_spec =Some( query_awaited.get_variable_col_specs().to_owned());
-            let query_params = parse_python_query_params(params, true, col_spec.as_deref())?;
-            Ok::<(), ScyllaPyError>(())
-            };
-            self.native_execute(py, None::<Query>, Some(query_awaited), query_params, paged)
-        }
-
     fn prepare_query_async<'a>(
         &'a self,
         query: Query,
