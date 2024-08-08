@@ -1,10 +1,9 @@
 use pyo3::{
-    ffi::Py_None,
     pyclass, pymethods,
     types::{PyDict, PyList},
     Py, PyAny, PyRefMut, Python,
 };
-use scylla::{frame::value::LegacySerializedValues, query::Query};
+use scylla::{query::Query};
 use tokio::runtime::Runtime;
 
 use crate::{
@@ -12,7 +11,7 @@ use crate::{
     exceptions::rust_err::{ScyllaPyError, ScyllaPyResult},
     queries::ScyllaPyRequestParams,
     scylla_cls::Scylla,
-    utils::{parse_python_query_params, py_to_value, ScyllaPyCQLDTO},
+    utils::{parse_python_query_params},
 };
 
 use super::utils::{pretty_build, Timeout};

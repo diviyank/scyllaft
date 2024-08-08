@@ -1,13 +1,11 @@
-use futures::Future;
+
 use pyo3::{
     pyclass, pymethods,
     types::{PyDict, PyList, PyTuple},
     Py, PyAny, PyRefMut, Python,
 };
 use scylla::{
-    prepared_statement::PreparedStatement,
     query::Query,
-    transport::errors::{DbError, QueryError},
 };
 
 use crate::{
@@ -15,12 +13,12 @@ use crate::{
     exceptions::rust_err::ScyllaPyResult,
     queries::ScyllaPyRequestParams,
     scylla_cls::Scylla,
-    utils::{parse_python_query_params, py_to_value, ScyllaPyCQLDTO},
+    utils::{parse_python_query_params},
 };
 use tokio::runtime::Runtime;
 
 use super::utils::{pretty_build, Timeout};
-use scylla::frame::value::LegacySerializedValues;
+
 
 #[pyclass]
 #[derive(Clone, Debug, Default)]

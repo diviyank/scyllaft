@@ -3,7 +3,7 @@ use pyo3::{
     types::{PyDict, PyList},
     Py, PyAny, PyRefMut, Python,
 };
-use scylla::{frame::value::LegacySerializedValues, query::Query};
+use scylla::{query::Query};
 
 use super::utils::{pretty_build, IfCluase, Timeout};
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
     exceptions::rust_err::{ScyllaPyError, ScyllaPyResult},
     queries::ScyllaPyRequestParams,
     scylla_cls::Scylla,
-    utils::{parse_python_query_params, py_to_value},
+    utils::{parse_python_query_params},
 };
 
 use tokio::runtime::Runtime;
