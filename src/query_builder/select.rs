@@ -1,24 +1,17 @@
-
 use pyo3::{
     pyclass, pymethods,
     types::{PyDict, PyList, PyTuple},
     Py, PyAny, PyRefMut, Python,
 };
-use scylla::
-    query::Query,
-;
+use scylla::query::Query;
 
 use crate::{
-    batches::ScyllaPyInlineBatch,
-    exceptions::rust_err::ScyllaPyResult,
-    queries::ScyllaPyRequestParams,
-    scylla_cls::Scylla,
-    utils::parse_python_query_params,
+    batches::ScyllaPyInlineBatch, exceptions::rust_err::ScyllaPyResult,
+    queries::ScyllaPyRequestParams, scylla_cls::Scylla, utils::parse_python_query_params,
 };
 use tokio::runtime::Runtime;
 
 use super::utils::{pretty_build, Timeout};
-
 
 #[pyclass]
 #[derive(Clone, Debug, Default)]
