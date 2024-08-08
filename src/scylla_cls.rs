@@ -1,4 +1,6 @@
-use std::{collections::HashMap, num::NonZeroUsize, sync::Arc, time::Duration, borrow::BorrowMut};
+use std::{collections::HashMap, num::NonZeroUsize, sync::Arc, time::Duration};
+
+use scylla::transport::errors::{QueryError, DbError};
 use futures::Future;
 use crate::{
     exceptions::rust_err::{ScyllaPyError, ScyllaPyResult},
@@ -15,13 +17,12 @@ use openssl::{
     ssl::{SslContextBuilder, SslMethod, SslVerifyMode},
     x509::X509,
 };
-use pyo3::{pyclass, pymethods, Py, types::PyList, PyAny, Python};
+use pyo3::{pyclass, pymethods, types::PyList, PyAny, Python};
 use scylla::{
     batch::BatchStatement,
-    frame::{response::result::ColumnSpec, value::{ValueList, LegacySerializedValues}},
+    frame::{response::result::ColumnSpec, value::{ValueList}},
     prepared_statement::PreparedStatement,
-    query::Query,
-     transport::errors::{QueryError, DbError}
+    query::Query
 };
 
 #[pyclass(frozen, weakref)]
@@ -163,7 +164,8 @@ impl Scylla {
         }
         specs
     }
-    fn prepare_query_async<'a>(
+
+    pub fn prepare_query<'a>(
         &'a self,
         query: Query,
     ) -> impl Future<Output = Result<PreparedStatement, QueryError>> + 'a{

@@ -1,6 +1,4 @@
-use pyo3::FromPyObject;
-
-use crate::utils::ScyllaPyCQLDTO;
+use pyo3::{FromPyObject, Py, PyAny};
 
 #[derive(FromPyObject, Debug, Clone)]
 pub enum Timeout {
@@ -15,13 +13,13 @@ pub enum IfCluase {
     Exists,
     Condition {
         clauses: Vec<String>,
-        values: Vec<ScyllaPyCQLDTO>,
+        values: Vec<Py<PyAny>>,
     },
 }
 
 impl IfCluase {
     #[must_use]
-    pub fn extend_values(&self, query_values: Vec<ScyllaPyCQLDTO>) -> Vec<ScyllaPyCQLDTO> {
+    pub fn extend_values(&self, query_values: Vec<Py<PyAny>>) -> Vec<Py<PyAny>> {
         match self {
             IfCluase::Exists => query_values,
             IfCluase::Condition { clauses: _, values } => {

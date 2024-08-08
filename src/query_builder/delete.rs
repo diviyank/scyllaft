@@ -1,4 +1,8 @@
-use pyo3::{pyclass, pymethods, types::PyDict, PyAny, PyRefMut, Python};
+use pyo3::{
+    pyclass, pymethods,
+    types::{PyDict, PyList},
+    Py, PyAny, PyRefMut, Python,
+};
 use scylla::{frame::value::LegacySerializedValues, query::Query};
 
 use super::utils::{pretty_build, IfCluase, Timeout};
@@ -7,9 +11,10 @@ use crate::{
     exceptions::rust_err::{ScyllaPyError, ScyllaPyResult},
     queries::ScyllaPyRequestParams,
     scylla_cls::Scylla,
-    utils::{py_to_value, ScyllaPyCQLDTO},
+    utils::{parse_python_query_params, py_to_value},
 };
 
+use tokio::runtime::Runtime;
 #[pyclass]
 #[derive(Clone, Debug, Default)]
 pub struct Delete {
@@ -19,7 +24,7 @@ pub struct Delete {
     timestamp_: Option<u64>,
     if_clause_: Option<IfCluase>,
     where_clauses_: Vec<String>,
-    values_: Vec<ScyllaPyCQLDTO>,
+    raw_values_: Vec<Py<PyAny>>,
     request_params_: ScyllaPyRequestParams,
 }
 
@@ -109,7 +114,7 @@ impl Delete {
         slf.where_clauses_.push(clause);
         if let Some(vals) = values {
             for value in vals {
-                slf.values_.push(py_to_value(value, None)?);
+                slf.raw_values_.push(value.into());
             }
         }
         Ok(slf)
@@ -145,22 +150,19 @@ impl Delete {
         clause: String,
         values: Option<Vec<&'a PyAny>>,
     ) -> ScyllaPyResult<PyRefMut<'a, Self>> {
-        let parsed_values = if let Some(vals) = values {
-            vals.iter()
-                .map(|item| py_to_value(item, None))
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
-            vec![]
+        let values_clause: Vec<Py<PyAny>> = match values {
+            Some(val) => val.iter().map(|x| x.clone().into()).collect(),
+            None => vec![],
         };
         match slf.if_clause_.as_mut() {
             Some(IfCluase::Condition { clauses, values }) => {
                 clauses.push(clause);
-                values.extend(parsed_values);
+                values.extend(values_clause);
             }
             None | Some(IfCluase::Exists) => {
                 slf.if_clause_ = Some(IfCluase::Condition {
                     clauses: vec![clause],
-                    values: parsed_values,
+                    values: values_clause,
                 });
             }
         }
@@ -196,11 +198,19 @@ impl Delete {
         self.request_params_.apply_to_query(&mut query);
 
         let values = if let Some(if_clause) = &self.if_clause_ {
-            if_clause.extend_values(self.values_.clone())
+            if_clause.extend_values(self.raw_values_.clone())
         } else {
-            self.values_.clone()
+            self.raw_values_.clone()
         };
-        scylla.native_execute(py, Some(query), None, values, 0)
+        let prepared = Runtime::new()
+            .unwrap()
+            .block_on(scylla.prepare_query(query))
+            .unwrap();
+
+        let col_spec = Some(prepared.get_variable_col_specs().to_owned());
+        let params = PyList::new(py, values);
+        let serialized = parse_python_query_params(Some(params), true, col_spec.as_deref())?;
+        scylla.native_execute(py, Some(query), None, serialized, 0)
     }
 
     /// Add to batch
@@ -211,19 +221,29 @@ impl Delete {
     ///
     /// May result into error if query cannot be build.
     /// Or values cannot be passed to batch.
-    pub fn add_to_batch(&self, batch: &mut ScyllaPyInlineBatch) -> ScyllaPyResult<()> {
+    pub fn add_to_batch<'a>(
+        &'a self,
+        py: Python<'a>,
+        scylla: &'a Scylla,
+        batch: &mut ScyllaPyInlineBatch,
+    ) -> ScyllaPyResult<()> {
         let mut query = Query::new(self.build_query()?);
         self.request_params_.apply_to_query(&mut query);
 
         let values = if let Some(if_clause) = &self.if_clause_ {
-            if_clause.extend_values(self.values_.clone())
+            if_clause.extend_values(self.raw_values_.clone())
         } else {
-            self.values_.clone()
+            self.raw_values_.clone()
         };
-        let mut serialized = LegacySerializedValues::new();
-        for val in values {
-            serialized.add_value(&val)?;
-        }
+        let prepared = Runtime::new()
+            .unwrap()
+            .block_on(scylla.prepare_query(query))
+            .unwrap();
+
+        let col_spec = Some(prepared.get_variable_col_specs().to_owned());
+        let params = PyList::new(py, values.clone());
+        let serialized = parse_python_query_params(Some(params), true, col_spec.as_deref())?;
+
         batch.add_query_inner(query, serialized);
         Ok(())
     }

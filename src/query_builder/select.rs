@@ -1,14 +1,18 @@
 use futures::Future;
 use pyo3::{
     pyclass, pymethods,
-    types::{PyDict, PyTuple, PyList},
-    Py, PyAny, PyRefMut, Python
+    types::{PyDict, PyList, PyTuple},
+    Py, PyAny, PyRefMut, Python,
 };
-use scylla::{prepared_statement::PreparedStatement, query::Query, transport::errors::{QueryError, DbError}};
+use scylla::{
+    prepared_statement::PreparedStatement,
+    query::Query,
+    transport::errors::{DbError, QueryError},
+};
 
 use crate::{
     batches::ScyllaPyInlineBatch,
-    exceptions::rust_err::{ScyllaPyResult, ScyllaPyError},
+    exceptions::rust_err::ScyllaPyResult,
     queries::ScyllaPyRequestParams,
     scylla_cls::Scylla,
     utils::{parse_python_query_params, py_to_value, ScyllaPyCQLDTO},
@@ -32,7 +36,6 @@ pub struct Select {
     group_by_: Option<String>,
     columns_: Option<Vec<String>>,
     where_clauses_: Vec<String>,
-    values_: Vec<ScyllaPyCQLDTO>,
     raw_values_: Vec<Py<PyAny>>,
     request_params_: ScyllaPyRequestParams,
 }
@@ -107,18 +110,6 @@ impl Select {
             timeout.as_str(),
         ])
     }
-    fn prepare_query<'a>(
-        &'a self,
-        scylla: &'a Scylla,
-        query: Query,
-    ) -> impl Future<Output = Result<PreparedStatement, QueryError>> + 'a{
-        async {
-        let session_arc = scylla.scylla_session.clone();
-        let session_guard = session_arc.read().await;
-        let session = session_guard.as_ref().ok_or(QueryError::DbError((DbError::Invalid), "Session is not Created.".into()))?;
-            session.prepare(query).await
-        }
-    }
 }
 
 #[pymethods]
@@ -167,7 +158,6 @@ impl Select {
         slf.where_clauses_.push(clause);
         if let Some(vals) = values {
             for value in vals {
-                slf.values_.push(py_to_value(value, None)?);
                 slf.raw_values_.push(value.into());
             }
         }
@@ -263,11 +253,12 @@ impl Select {
     ) -> ScyllaPyResult<&'a PyAny> {
         let mut query = Query::new(self.build_query());
         self.request_params_.apply_to_query(&mut query);
-        let prepared = Runtime::new().unwrap().block_on(
-        self.prepare_query(scylla, query)
-        ).unwrap();
+        let prepared = Runtime::new()
+            .unwrap()
+            .block_on(scylla.prepare_query(query))
+            .unwrap();
 
-        let col_spec =Some( prepared.get_variable_col_specs().to_owned());
+        let col_spec = Some(prepared.get_variable_col_specs().to_owned());
         let values = PyList::new(py, self.raw_values_.clone());
         let params = parse_python_query_params(Some(values), true, col_spec.as_deref())?;
         scylla.native_execute(py, None::<Query>, Some(prepared), params, paged)
@@ -280,15 +271,24 @@ impl Select {
     /// # Errors
     ///
     /// Returns error if values cannot be passed to batch.
-    pub fn add_to_batch(&self, batch: &mut ScyllaPyInlineBatch) -> ScyllaPyResult<()> {
+    pub fn add_to_batch<'a>(
+        &'a self,
+        py: Python<'a>,
+        scylla: &'a Scylla,
+        batch: &mut ScyllaPyInlineBatch,
+    ) -> ScyllaPyResult<()> {
         let mut query = Query::new(self.build_query());
         self.request_params_.apply_to_query(&mut query);
+        let prepared = Runtime::new()
+            .unwrap()
+            .block_on(scylla.prepare_query(query))
+            .unwrap();
 
-        let mut serialized = LegacySerializedValues::new();
-        for val in self.values_.clone() {
-            serialized.add_value(&val)?;
-        }
-        batch.add_query_inner(query, serialized);
+        let col_spec = Some(prepared.get_variable_col_specs().to_owned());
+        let values = PyList::new(py, self.raw_values_.clone());
+        let params = parse_python_query_params(Some(values), true, col_spec.as_deref())?;
+
+        batch.add_query_inner(query, params);
         Ok(())
     }
 
