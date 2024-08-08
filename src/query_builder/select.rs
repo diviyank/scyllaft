@@ -288,7 +288,7 @@ impl Select {
         let values = PyList::new(py, self.raw_values_.clone());
         let params = parse_python_query_params(Some(values), true, col_spec.as_deref())?;
 
-        batch.add_query_inner(query, params);
+        batch.add_query_inner(prepared, params);
         Ok(())
     }
 

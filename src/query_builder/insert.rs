@@ -1,12 +1,18 @@
-use pyo3::{pyclass, pymethods, types::PyDict, PyAny, PyRefMut, Python};
+use pyo3::{
+    ffi::Py_None,
+    pyclass, pymethods,
+    types::{PyDict, PyList},
+    Py, PyAny, PyRefMut, Python,
+};
 use scylla::{frame::value::LegacySerializedValues, query::Query};
+use tokio::runtime::Runtime;
 
 use crate::{
     batches::ScyllaPyInlineBatch,
     exceptions::rust_err::{ScyllaPyError, ScyllaPyResult},
     queries::ScyllaPyRequestParams,
     scylla_cls::Scylla,
-    utils::{py_to_value, ScyllaPyCQLDTO},
+    utils::{parse_python_query_params, py_to_value, ScyllaPyCQLDTO},
 };
 
 use super::utils::{pretty_build, Timeout};
@@ -17,7 +23,7 @@ pub struct Insert {
     table_: String,
     if_not_exists_: bool,
     names_: Vec<String>,
-    values_: Vec<ScyllaPyCQLDTO>,
+    raw_values_: Vec<Py<PyAny>>,
 
     timeout_: Option<Timeout>,
     ttl_: Option<i32>,
@@ -110,14 +116,9 @@ impl Insert {
     ) -> ScyllaPyResult<PyRefMut<'a, Self>> {
         slf.names_.push(name);
         // Small optimization to speedup inserts.
-        if value.is_none() {
-            slf.values_.push(ScyllaPyCQLDTO::Unset);
-        } else {
-            slf.values_.push(py_to_value(value, None)?);
-        }
+        slf.raw_values_.push(value.into());
         Ok(slf)
     }
-
     #[must_use]
     pub fn timeout(mut slf: PyRefMut<'_, Self>, timeout: Timeout) -> PyRefMut<'_, Self> {
         slf.timeout_ = Some(timeout);
@@ -164,7 +165,15 @@ impl Insert {
     pub fn execute<'a>(&'a self, py: Python<'a>, scylla: &'a Scylla) -> ScyllaPyResult<&'a PyAny> {
         let mut query = Query::new(self.build_query()?);
         self.request_params_.apply_to_query(&mut query);
-        scylla.native_execute(py, Some(query), None, self.values_.clone(), 0)
+        let prepared = Runtime::new()
+            .unwrap()
+            .block_on(scylla.prepare_query(query))
+            .unwrap();
+
+        let col_spec = Some(prepared.get_variable_col_specs().to_owned());
+        let values = PyList::new(py, self.raw_values_.clone());
+        let params = parse_python_query_params(Some(values), true, col_spec.as_deref())?;
+        scylla.native_execute(py, None::<Query>, Some(prepared), params, 0)
     }
 
     /// Add to batch
@@ -175,15 +184,24 @@ impl Insert {
     ///
     /// May result into error if query cannot be build.
     /// Or values cannot be passed to batch.
-    pub fn add_to_batch(&self, batch: &mut ScyllaPyInlineBatch) -> ScyllaPyResult<()> {
+    pub fn add_to_batch<'a>(
+        &'a self,
+        py: Python<'a>,
+        scylla: &'a Scylla,
+        batch: &mut ScyllaPyInlineBatch,
+    ) -> ScyllaPyResult<()> {
         let mut query = Query::new(self.build_query()?);
         self.request_params_.apply_to_query(&mut query);
+        let prepared = Runtime::new()
+            .unwrap()
+            .block_on(scylla.prepare_query(query))
+            .unwrap();
 
-        let mut serialized = LegacySerializedValues::new();
-        for val in self.values_.clone() {
-            serialized.add_value(&val)?;
-        }
-        batch.add_query_inner(query, serialized);
+        let col_spec = Some(prepared.get_variable_col_specs().to_owned());
+        let values = PyList::new(py, self.raw_values_.clone());
+        let params = parse_python_query_params(Some(values), true, col_spec.as_deref())?;
+
+        batch.add_query_inner(prepared, params);
         Ok(())
     }
 

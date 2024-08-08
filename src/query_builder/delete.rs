@@ -210,7 +210,7 @@ impl Delete {
         let col_spec = Some(prepared.get_variable_col_specs().to_owned());
         let params = PyList::new(py, values);
         let serialized = parse_python_query_params(Some(params), true, col_spec.as_deref())?;
-        scylla.native_execute(py, Some(query), None, serialized, 0)
+        scylla.native_execute(py, None::<Query>, Some(prepared), serialized, 0)
     }
 
     /// Add to batch
@@ -244,7 +244,7 @@ impl Delete {
         let params = PyList::new(py, values.clone());
         let serialized = parse_python_query_params(Some(params), true, col_spec.as_deref())?;
 
-        batch.add_query_inner(query, serialized);
+        batch.add_query_inner(prepared, serialized);
         Ok(())
     }
 
