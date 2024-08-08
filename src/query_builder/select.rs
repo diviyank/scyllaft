@@ -4,16 +4,16 @@ use pyo3::{
     types::{PyDict, PyList, PyTuple},
     Py, PyAny, PyRefMut, Python,
 };
-use scylla::{
+use scylla::
     query::Query,
-};
+;
 
 use crate::{
     batches::ScyllaPyInlineBatch,
     exceptions::rust_err::ScyllaPyResult,
     queries::ScyllaPyRequestParams,
     scylla_cls::Scylla,
-    utils::{parse_python_query_params},
+    utils::parse_python_query_params,
 };
 use tokio::runtime::Runtime;
 
