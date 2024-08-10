@@ -14,7 +14,7 @@ use crate::{
     utils::parse_python_query_params,
 };
 
-use tokio::runtime::Runtime;
+
 #[pyclass]
 #[derive(Clone, Debug, Default)]
 pub struct Delete {
@@ -202,10 +202,17 @@ impl Delete {
         } else {
             self.raw_values_.clone()
         };
-        let prepared = Runtime::new()
-            .unwrap()
-            .block_on(scylla.prepare_query(query))
-            .unwrap();
+        // Dirty but necessary to use a .spawn(async move {})
+        let scylla_clone = scylla.clone();
+        let query_clone = query.clone();
+
+        let runtime = pyo3_asyncio::tokio::get_runtime();
+        let prepared = runtime
+            .block_on(async move {
+                runtime.spawn(
+                    async move  {scylla_clone.prepare_query(query_clone).await}
+                ).await})
+            .unwrap()?;
 
         let col_spec = Some(prepared.get_variable_col_specs().to_owned());
         let params = PyList::new(py, values);
@@ -235,10 +242,17 @@ impl Delete {
         } else {
             self.raw_values_.clone()
         };
-        let prepared = Runtime::new()
-            .unwrap()
-            .block_on(scylla.prepare_query(query))
-            .unwrap();
+        // Dirty but necessary to use a .spawn(async move {})
+        let scylla_clone = scylla.clone();
+        let query_clone = query.clone();
+
+        let runtime = pyo3_asyncio::tokio::get_runtime();
+        let prepared = runtime
+            .block_on(async move {
+                runtime.spawn(
+                    async move  {scylla_clone.prepare_query(query_clone).await}
+                ).await})
+            .unwrap()?;
 
         let col_spec = Some(prepared.get_variable_col_specs().to_owned());
         let params = PyList::new(py, values.clone());

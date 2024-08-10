@@ -20,7 +20,7 @@ use openssl::{
 use pyo3::{pyclass, pymethods, types::PyList, PyAny, Python};
 use scylla::{
     batch::BatchStatement,
-    frame::{response::result::ColumnSpec, value::{ValueList}},
+    frame::{response::result::ColumnSpec, value::ValueList},
     prepared_statement::PreparedStatement,
     query::Query
 };

@@ -4,7 +4,7 @@ use pyo3::{
     Py, PyAny, PyRefMut, Python,
 };
 use scylla::query::Query;
-use tokio::runtime::Runtime;
+
 
 use crate::{
     batches::ScyllaPyInlineBatch,
@@ -285,10 +285,17 @@ impl Update {
         } else {
             values
         };
-        let prepared = Runtime::new()
-            .unwrap()
-            .block_on(scylla.prepare_query(query))
-            .unwrap();
+        // Dirty but necessary to use a .spawn(async move {})
+        let scylla_clone = scylla.clone();
+        let query_clone = query.clone();
+
+        let runtime = pyo3_asyncio::tokio::get_runtime();
+        let prepared = runtime
+            .block_on(async move {
+                runtime.spawn(
+                    async move  {scylla_clone.prepare_query(query_clone).await}
+                ).await})
+            .unwrap()?;
 
         let col_spec = Some(prepared.get_variable_col_specs().to_owned());
         let params = PyList::new(py, values);
@@ -321,10 +328,17 @@ impl Update {
             values
         };
 
-        let prepared = Runtime::new()
-            .unwrap()
-            .block_on(scylla.prepare_query(query))
-            .unwrap();
+        // Dirty but necessary to use a .spawn(async move {})
+        let scylla_clone = scylla.clone();
+        let query_clone = query.clone();
+
+        let runtime = pyo3_asyncio::tokio::get_runtime();
+        let prepared = runtime
+            .block_on(async move {
+                runtime.spawn(
+                    async move  {scylla_clone.prepare_query(query_clone).await}
+                ).await})
+            .unwrap()?;
 
         let col_spec = Some(prepared.get_variable_col_specs().to_owned());
         let params = PyList::new(py, values.clone());

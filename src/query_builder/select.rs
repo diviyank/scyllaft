@@ -3,13 +3,12 @@ use pyo3::{
     types::{PyDict, PyList, PyTuple},
     Py, PyAny, PyRefMut, Python,
 };
-use scylla::query::Query;
+use scylla::{frame::value::LegacySerializedValues, query::Query};
 
 use crate::{
     batches::ScyllaPyInlineBatch, exceptions::rust_err::ScyllaPyResult,
     queries::ScyllaPyRequestParams, scylla_cls::Scylla, utils::parse_python_query_params,
 };
-use tokio::runtime::Runtime;
 
 use super::utils::{pretty_build, Timeout};
 
@@ -244,10 +243,26 @@ impl Select {
     ) -> ScyllaPyResult<&'a PyAny> {
         let mut query = Query::new(self.build_query());
         self.request_params_.apply_to_query(&mut query);
-        let prepared = Runtime::new()
-            .unwrap()
-            .block_on(scylla.prepare_query(query))
-            .unwrap();
+        if self.raw_values_.is_empty() {
+            return scylla.native_execute(
+                py,
+                Some(query),
+                None,
+                LegacySerializedValues::new(),
+                paged,
+            );
+        }
+        // Dirty but necessary to use a .spawn(async move {})
+        let scylla_clone = scylla.clone();
+        let query_clone = query.clone();
+
+        let runtime = pyo3_asyncio::tokio::get_runtime();
+        let prepared = runtime
+            .block_on(async move {
+                runtime.spawn(
+                    async move  {scylla_clone.prepare_query(query_clone).await}
+                ).await})
+            .unwrap()?;
 
         let col_spec = Some(prepared.get_variable_col_specs().to_owned());
         let values = PyList::new(py, self.raw_values_.clone());
@@ -270,10 +285,17 @@ impl Select {
     ) -> ScyllaPyResult<()> {
         let mut query = Query::new(self.build_query());
         self.request_params_.apply_to_query(&mut query);
-        let prepared = Runtime::new()
-            .unwrap()
-            .block_on(scylla.prepare_query(query))
-            .unwrap();
+        // Dirty but necessary to use a .spawn(async move {})
+        let scylla_clone = scylla.clone();
+        let query_clone = query.clone();
+
+        let runtime = pyo3_asyncio::tokio::get_runtime();
+        let prepared = runtime
+            .block_on(async move {
+                runtime.spawn(
+                    async move  {scylla_clone.prepare_query(query_clone).await}
+                ).await})
+            .unwrap()?;
 
         let col_spec = Some(prepared.get_variable_col_specs().to_owned());
         let values = PyList::new(py, self.raw_values_.clone());
