@@ -169,12 +169,14 @@ impl Insert {
         let query_clone = query.clone();
 
         let runtime = pyo3_asyncio::tokio::get_runtime();
-        let prepared = runtime
+        let prepared = py.allow_threads(|| {
+            runtime
             .block_on(async move {
                 runtime.spawn(
                     async move  {scylla_clone.prepare_query(query_clone).await}
                 ).await})
-            .unwrap()?;
+            .unwrap()
+        })?;
 
         let col_spec = Some(prepared.get_variable_col_specs().to_owned());
         let values = PyList::new(py, self.raw_values_.clone());
@@ -203,12 +205,14 @@ impl Insert {
         let query_clone = query.clone();
 
         let runtime = pyo3_asyncio::tokio::get_runtime();
-        let prepared = runtime
+        let prepared = py.allow_threads(|| {
+            runtime
             .block_on(async move {
                 runtime.spawn(
                     async move  {scylla_clone.prepare_query(query_clone).await}
                 ).await})
-            .unwrap()?;
+            .unwrap()
+        })?;
 
         let col_spec = Some(prepared.get_variable_col_specs().to_owned());
         let values = PyList::new(py, self.raw_values_.clone());
